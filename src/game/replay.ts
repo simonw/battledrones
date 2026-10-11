@@ -5,7 +5,8 @@
  * when it's wanted, so it costs the menu nothing:
  *
  *   menu → 🎬 Watch a replay: paste a record, or pick its file (any build)
- *   npm run dev, then /?replay=battles/<file>.json          (dev builds; tools/arena.ts watch does this)
+ *   /?replay=<record>: its link, relative to the game, any CORS-enabled URL, a GitHub file or a Gist (any build;
+ *     npm run dev, then /?replay=battles/<file>.json reaches the project's own files: tools/arena.ts watch does this)
  *   /?replay=battles/<file>.json&follow                      (dev builds) a live battle: re-read every second
  *
  * It checks the world hash every 100 ticks as it plays, and says so if the
@@ -170,8 +171,61 @@ export function replayFromJson(text: string): ReplayFeed {
   return new ReplayFeed(parseRecord(text), null, false);
 }
 
-/** Load `?replay=<path>` (relative to the dev server's root, or /@fs/…) into a feed for GameScene. */
+/** A Gist's page, gist.github.com/[<owner>/]<id>[/<revision>]: its raw files are served with CORS, the page isn't. */
+const GIST = /^https?:\/\/gist\.github\.com\/(?:([^/]+)\/)?([0-9a-f]+)(?:\/([0-9a-f]+))?$/i;
+/** A file's page on GitHub, github.com/<owner>/<repo>/blob/<ref>/<path>: raw.githubusercontent.com serves it with CORS. */
+const GITHUB_FILE = /^https?:\/\/github\.com\/([^/]+)\/([^/]+)\/blob\/(.+)$/i;
+
+/**
+ * The text of a battle record linked by URL: relative to the page or
+ * absolute, from any server that sends CORS headers, a file's page on GitHub,
+ * or a Gist (the record viewer, record-viewer.html, reads links the same way).
+ * Throws a message a person can act on.
+ */
+export async function fetchLinkedRecord(ref: string, base = location.href): Promise<string> {
+  let url: URL;
+  try {
+    url = new URL(ref.trim(), base);
+  } catch {
+    throw new Error(`"${ref}" isn't a URL`);
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") throw new Error("Only http and https links can be loaded");
+  const page = (url.origin + url.pathname).replace(/\/$/, "");
+  const gist = GIST.exec(page);
+  if (gist) {
+    const [, owner, id, revision] = gist;
+    // with the owner in the link, the raw file needs no API call (GitHub allows 60 an hour per address); it's the Gist's first file
+    if (owner) return fetchText(`https://gist.githubusercontent.com/${owner}/${id}/raw/${revision ?? ""}`);
+    const res = await fetch(`https://api.github.com/gists/${id}${revision ? `/${revision}` : ""}`).catch(() => null);
+    if (!res?.ok) throw new Error(`Couldn't look up Gist ${id} with GitHub's API${res ? ` (${res.status})` : ""}`);
+    const files = Object.values(((await res.json()) as { files?: Record<string, { filename: string; raw_url: string }> }).files ?? {});
+    const file = files.find((f) => /\.json$/i.test(f.filename)) ?? files[0];
+    if (!file) throw new Error(`Gist ${id} has no files`);
+    return fetchText(file.raw_url);
+  }
+  const blob = GITHUB_FILE.exec(page);
+  return fetchText(blob ? `https://raw.githubusercontent.com/${blob[1]}/${blob[2]}/${blob[3]}` : url.href);
+}
+
+async function fetchText(url: string): Promise<string> {
+  let res: Response;
+  try {
+    res = await fetch(url);
+  } catch {
+    // (to a page, a server that doesn't allow cross-origin reads looks just like no network)
+    throw new Error(`Couldn't fetch ${url}: no network, or its server doesn't allow other sites to read it (CORS)`);
+  }
+  if (!res.ok) throw new Error(`Couldn't fetch ${url}: ${res.status} ${res.statusText}`.trim());
+  return res.text();
+}
+
+/**
+ * Load `?replay=<record>` (any build: fetchLinkedRecord) into a feed for
+ * GameScene. `follow` (dev builds, `&follow`) re-reads a live battle's file
+ * every second as it grows.
+ */
 export async function loadReplay(ref: string, follow: boolean): Promise<ReplayFeed> {
-  const url = /^(https?:)?\//.test(ref) ? ref : `/${ref}`;
-  return new ReplayFeed(await fetchRecord(url), url, follow);
+  if (!follow) return new ReplayFeed(parseRecord(await fetchLinkedRecord(ref)), null, false);
+  const url = new URL(ref, location.href).href;
+  return new ReplayFeed(await fetchRecord(url), url, true);
 }

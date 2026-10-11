@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createAiState, tickAi } from "../src/sim/ai/commander";
 import { seenEnemies } from "../src/sim/ai/intel";
 import { knownBuildings } from "../src/sim/fog";
@@ -345,10 +345,10 @@ describe("the battle viewer costs the game nothing until it's wanted", () => {
       for (const spec of imports) expect(/(^|\/)replay$|(^|\/)arena\//.test(spec), `${path} imports ${spec}`).toBe(false);
     }
     const main = sources["../src/main.ts"]!;
-    // the menu's "Watch a replay" (every build) and ?replay=<url> (dev builds) both load it dynamically
+    // the menu's "Watch a replay" and ?replay=<link> (every build) both load it dynamically
     expect(main.match(/import\("\.\/game\/replay"\)/g)?.length).toBe(2);
-    // ?replay= and &follow are dev-only: inside `if (import.meta.env.DEV && …)`, which Vite turns into `if (false)` for production
-    expect(main).toMatch(/if \(import\.meta\.env\.DEV && new URLSearchParams\(location\.search\)\.has\("replay"\)\)/);
+    // &follow (live viewing) is dev-only: `import.meta.env.DEV && …`, which Vite turns into `false` for production
+    expect(main).toMatch(/import\.meta\.env\.DEV && params\.has\("follow"\)/);
   });
 });
 
@@ -362,6 +362,56 @@ describe("a pasted battle record", () => {
     expect(() => parseRecord("{not json")).toThrow(/isn't JSON/);
     expect(() => parseRecord('{"hello": 1}')).toThrow(/isn't a battle record/);
     expect(() => parseRecord(json.replace('"map":"frostbite"', '"map":"atlantis"'))).toThrow(/"atlantis", a map this version of the game doesn't have/);
+  });
+});
+
+describe("a battle record linked by URL (?replay=)", () => {
+  const fetched: string[] = [];
+  const respond = (body: unknown, status = 200) =>
+    new Response(typeof body === "string" ? body : JSON.stringify(body), { status, statusText: status === 404 ? "Not Found" : "" });
+  const stub = (answer: (url: string) => Response | Promise<Response>) => {
+    fetched.length = 0;
+    vi.stubGlobal("fetch", (url: string) => (fetched.push(url), Promise.resolve(answer(url))));
+  };
+  afterEach(() => vi.unstubAllGlobals());
+  const base = "https://simonw.github.io/battledrones/?replay=x";
+
+  it("is fetched relative to the game, or from anywhere that allows it", async () => {
+    const { fetchLinkedRecord } = await import("../src/game/replay");
+    stub(() => respond("{}"));
+    expect(await fetchLinkedRecord("battles/showcase/a.json", base)).toBe("{}");
+    expect(await fetchLinkedRecord(" https://example.com/b.json ", base)).toBe("{}");
+    expect(fetched).toEqual(["https://simonw.github.io/battledrones/battles/showcase/a.json", "https://example.com/b.json"]);
+  });
+
+  it("a file's page on GitHub, or a Gist's, is read from its raw copy", async () => {
+    const { fetchLinkedRecord } = await import("../src/game/replay");
+    stub(() => respond("{}"));
+    await fetchLinkedRecord("https://github.com/o/r/blob/main/battles/a.json?plain=1", base);
+    await fetchLinkedRecord("https://gist.github.com/simonw/0a1b2c/", base);
+    await fetchLinkedRecord("https://gist.github.com/simonw/0a1b2c/9f8e7d", base);
+    expect(fetched).toEqual([
+      "https://raw.githubusercontent.com/o/r/main/battles/a.json",
+      "https://gist.githubusercontent.com/simonw/0a1b2c/raw/",
+      "https://gist.githubusercontent.com/simonw/0a1b2c/raw/9f8e7d"
+    ]);
+    // without its owner, the API names the Gist's files: its first .json one
+    stub((url) =>
+      url.startsWith("https://api.github.com/")
+        ? respond({ files: { "README.md": { filename: "README.md", raw_url: "https://gist.githubusercontent.com/u/0a1b2c/raw/1/README.md" }, "b.json": { filename: "b.json", raw_url: "https://gist.githubusercontent.com/u/0a1b2c/raw/1/b.json" } } })
+        : respond("{}")
+    );
+    await fetchLinkedRecord("https://gist.github.com/0a1b2c", base);
+    expect(fetched).toEqual(["https://api.github.com/gists/0a1b2c", "https://gist.githubusercontent.com/u/0a1b2c/raw/1/b.json"]);
+  });
+
+  it("says what went wrong", async () => {
+    const { fetchLinkedRecord } = await import("../src/game/replay");
+    stub(() => respond("nope", 404));
+    await expect(fetchLinkedRecord("https://example.com/gone.json", base)).rejects.toThrow("Couldn't fetch https://example.com/gone.json: 404 Not Found");
+    vi.stubGlobal("fetch", () => Promise.reject(new TypeError("Failed to fetch")));
+    await expect(fetchLinkedRecord("https://example.com/a.json", base)).rejects.toThrow(/CORS/);
+    await expect(fetchLinkedRecord("javascript:alert(1)", base)).rejects.toThrow(/Only http and https/);
   });
 });
 

@@ -15,7 +15,8 @@ uv tool install llm && llm keys set openai           # or OPENAI_API_KEY
 llm install -e llm-tools-battledrones
 llm battledrones run --blue gpt-6-luna --red gpt-6-luna --map riverlands --seed 42
 npx vite-node tools/arena.ts watch battles/<file>.json   # the 3D viewer (npm run dev)
-# …or in any build of the game: menu → 🎬 Watch a replay, paste the record (or pick its file)
+# …or in any build of the game: menu → 🎬 Watch a replay, paste the record (or pick its file),
+# or open it by its link: /?replay=<record>, or /record-viewer.html?replay=<record> to read it round by round
 llm logs -d battles/<file>.logs.db                       # how each model thought (or Datasette)
 ```
 
@@ -682,10 +683,10 @@ ending as played when the new one differs.
 **The viewer** is the game's existing AI-vs-AI watch mode (the fog off by
 default, up to 4× speed), fed by the record instead of the AI. In any build,
 the public game included, the menu's **🎬 Watch a replay** opens a box to
-paste a record into (or pick its file). In dev builds,
-`/?replay=battles/<file>.json` loads one by URL (Vite's dev server serves
-files from the project root), and `tools/arena.ts watch` does that for you,
-in the right worktree. It adds:
+paste a record into (or pick its file), and `/?replay=<record>` loads one by
+its link (*As built*). On the dev server, `/?replay=battles/<file>.json`
+reaches the project's own files (Vite serves files from the project root),
+and `tools/arena.ts watch` does that for you, in the right worktree. It adds:
 
 - **Seeking.** Forward steps the sim with rendering off (a whole match in a
   few seconds). Backward uses keyframes taken every 30 s as it plays:
@@ -775,6 +776,7 @@ limits.
 | `llm-tools-battledrones/` | The LLM plugin: the `BattleDrones` toolbox and the `llm battledrones` command (Python), with its tests |
 | `src/game/replay.ts`, `src/ui/replay.ts` | The viewer and its panel: a chunk of its own (10 KB, 4 KB gzipped) that loads only when a replay is chosen |
 | `src/ui/replay-picker.ts` | The menu's "Watch a replay" sheet: paste a record or pick its file |
+| `record-viewer.html` | The record viewer: one standalone page, no game code |
 
 `src/arena` reads the sim and changes nothing in it. In the browser only the
 viewer imports it (`record.ts`), and nothing imports the viewer statically:
@@ -805,8 +807,9 @@ through instead of the AI commanders, and a fog side for the viewer's
   The same goes for the fallback adapters.
 - **Viewer**: a Playwright check plays a record in the dev viewer and
   checks the hash trail (Chromium).
-- **Dark build**: the production build contains no viewer and no `replay`
-  handling.
+- **Dark build**: the production build loads the viewer only when a
+  replay is chosen (from the menu or a `?replay=` link), and has no follow
+  mode.
 
 ## Phases
 
@@ -888,9 +891,23 @@ Where the build differs from, or adds to, the text above:
   follow mode. The HQ-kill cinematic isn't replayed after a seek.
 - **Replays in the public game.** The menu's "🎬 Watch a replay" takes a
   pasted record (or its file), checks it (JSON, a v1 record, a map this
-  version has) and plays it. URL loading (`?replay=`) and follow mode (live
-  viewing) stay in dev builds. `tools/arena-viewer-check.mjs --paste --prod`
-  pastes a record into the production build and checks the hash trail.
+  version has) and plays it. So does a link, `/?replay=<record>`, in every
+  build: relative to the game, any URL whose server allows cross-origin
+  reads (CORS), a file's page on GitHub (read from raw.githubusercontent.com)
+  or a Gist (its raw file; the API finds a link without the owner's name).
+  The build publishes `battles/showcase/` beside the game for these links,
+  and the game's Menu buttons leave the link behind. Follow mode (`&follow`,
+  live viewing) stays in dev builds.
+  `tools/arena-viewer-check.mjs --paste --prod` pastes a record into the
+  production build and checks the hash trail; `--prod` alone does the same
+  for a showcase record opened by its link.
+- **The record viewer** (`record-viewer.html`, a standalone page in the
+  build): a battle record round by round, with no game engine. It has a map
+  of where the orders sent things, in true coordinates (it works out which
+  side writes in a mirrored frame), each side's notes, radio and order
+  results, a timeline of commands per round and the raw JSON beside them. It
+  opens a file, a paste, a drop or a link (`?replay=`, read the same way as
+  the game's), and `#r<n>` bookmarks a round.
 
 - **Not built**: the commentator toolbox (`BattleDronesReplay`,
   `serve-replay`), `series --parallel`, the whole-conversation context

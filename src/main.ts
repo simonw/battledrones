@@ -352,6 +352,31 @@ function showMenu(): void {
   }
 }
 
+/**
+ * `/?replay=<record>`, in every build: fetch a battle record by its link
+ * (relative to the game, any CORS-enabled URL, a file on GitHub or a Gist) and
+ * watch it. Its Menu buttons leave the link behind (ui/fullscreen.ts).
+ */
+async function watchLinked(url: string, follow: boolean): Promise<void> {
+  const note = document.createElement("div");
+  note.className = "screen";
+  note.innerHTML = `<div class="loadbox"><p>Fetching the battle record…</p></div>`;
+  document.getElementById("hud")!.appendChild(note);
+  const feed = await import("./game/replay")
+    .then((m) => m.loadReplay(url, follow))
+    .catch((e: unknown) => {
+      note.innerHTML = `<div class="panel"><p class="time"></p><button class="cta">Main menu</button></div>`;
+      note.querySelector("p")!.textContent = `Couldn't play that battle record. ${e instanceof Error ? e.message : String(e)}`;
+      note.querySelector("button")!.addEventListener("click", () => location.assign("./"));
+      return null;
+    });
+  if (!feed) return;
+  note.remove();
+  watchSetup(feed);
+  sfx.unlockOnGesture(); // (no menu was tapped: the sound starts on the first touch)
+  await startGame(feed);
+}
+
 /** Point the next match at a battle replay's map and rules (not saved: the player's own picks stay). */
 function watchSetup(feed: { record: { map: string; mutators: MutatorId[] } }): void {
   Object.assign(gameMode, { mapId: feed.record.map, spectator: true, mode: "skirmish", mutators: feed.record.mutators, daily: null, op: null });
@@ -376,17 +401,10 @@ function startDaily(op: DailyOp): void {
   gameMode.mode = "skirmish";
 }
 
-// The battle viewer for agent battles (AGENT-BATTLES.md "Watching"), dev builds only:
-// /?replay=battles/<file>.json[&follow]. Production builds drop all of it (import.meta.env.DEV is false there).
-if (import.meta.env.DEV && new URLSearchParams(location.search).has("replay")) {
-  const q = new URLSearchParams(location.search);
-  void import("./game/replay")
-    .then((m) => m.loadReplay(q.get("replay")!, q.has("follow")))
-    .then((feed) => {
-      watchSetup(feed);
-      return startGame(feed);
-    })
-    .catch((e: unknown) => {
-      document.getElementById("hud")!.innerHTML = `<div class="screen"><p>Couldn't load the battle: ${String(e)}</p></div>`;
-    });
-} else showMenu();
+// The battle viewer for agent battles (AGENT-BATTLES.md "Watching") by a record's link, in every build:
+// /?replay=<record> (watchLinked). &follow, a live battle on the dev server, is dev-only: production builds
+// drop it (import.meta.env.DEV is false there).
+const params = new URLSearchParams(location.search);
+const replayLink = params.get("replay")?.trim();
+if (replayLink) void watchLinked(replayLink, import.meta.env.DEV && params.has("follow"));
+else showMenu();

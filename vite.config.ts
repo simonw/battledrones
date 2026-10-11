@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
 import { VitePWA } from "vite-plugin-pwa";
 import { MAP_ART } from "./src/game/map-art";
 import { simHash } from "./tools/arena/files";
@@ -26,6 +26,24 @@ function terrainRevisions(): Record<string, string> {
   return revs;
 }
 
+/**
+ * The showcase battle records (battles/showcase/) go out with the build, at
+ * the same path, so the game's `?replay=` links and the record viewer
+ * (record-viewer.html) can link to them. The dev server serves them from the
+ * project root already. (Not precached: they're fetched only when watched.)
+ */
+function showcaseBattles(): Plugin {
+  const dir = fileURLToPath(new URL("battles/showcase", import.meta.url));
+  return {
+    name: "showcase-battles",
+    apply: "build",
+    generateBundle() {
+      for (const f of readdirSync(dir).filter((f) => f.endsWith(".json")))
+        this.emitFile({ type: "asset", fileName: `battles/showcase/${f}`, source: readFileSync(join(dir, f)) });
+    }
+  };
+}
+
 export default defineConfig({
   // Local builds are portable; Pages supplies an absolute base for each version.
   base: "./",
@@ -41,12 +59,13 @@ export default defineConfig({
     chunkSizeWarningLimit: 1600,
     // the engine in its own chunk: game updates don't re-download three.js
     rollupOptions: {
-      // the game, plus the standalone vehicles reference page
-      input: { main: "index.html", vehicles: "vehicles.html" },
+      // the game, plus the standalone vehicles reference page and battle record viewer
+      input: { main: "index.html", vehicles: "vehicles.html", records: "record-viewer.html" },
       output: { manualChunks: { three: ["three"] } }
     }
   },
   plugins: [
+    showcaseBattles(),
     VitePWA({
       registerType: "autoUpdate",
       // precache the shell, icons and menu art; painted map terrain

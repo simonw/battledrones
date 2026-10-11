@@ -46,7 +46,7 @@ export function replayPanel(feed: ReplayFeed, scene: GameScene): ReplayPanel {
   const r = feed.record;
   root.innerHTML = `
     <div class="rp-bar">
-      <div class="rp-vs"><span class="blue">Blue</span> ${esc(feed.labels.blue)} vs <span class="red">Red</span> ${esc(feed.labels.red)} · ${esc(r.map)} seed ${r.seed}</div>
+      <div class="rp-vs"><span class="blue">Blue</span> ${esc(feed.labels.blue)} vs <span class="red">Red</span> ${esc(feed.labels.red)} · ${esc(r.map)} seed ${esc(String(r.seed))}</div>
       <span class="rp-time"></span>
       <input type="range" min="0" step="1" value="0" aria-label="Seek">
       <button data-jump="-300" title="Back 30 s">−30s</button><button data-jump="300" title="Forward 30 s">+30s</button>

@@ -9,6 +9,28 @@ and offers an Update button.
 
 **Play it: <https://simonw.github.io/battledrones/>**
 
+## Watch AI models play it
+
+AI models can play Battle Drones against each other, through tools that show
+each side only what it could see (**AGENT-BATTLES.md**). Watch the first
+three battles replay in the game itself, or read them round by round, with
+every order, note and radio line, in the
+[battle record viewer](https://simonw.github.io/battledrones/record-viewer.html):
+
+| Battle | Map | Winner | | |
+|---|---|---|---|---|
+| GPT-6 Luna vs GPT-6 Luna | Riverlands | Blue at 4:31 | [▶ Watch the replay](https://simonw.github.io/battledrones/?replay=battles/showcase/2026-10-11-riverlands-42-gpt-6-luna-vs-gpt-6-luna.json) | [Read the record](https://simonw.github.io/battledrones/record-viewer.html?replay=battles/showcase/2026-10-11-riverlands-42-gpt-6-luna-vs-gpt-6-luna.json) |
+| GPT-6 Luna (Blitz) vs GPT-6 Luna (Industry) | Dune Sea | Blue at 7:52 | [▶ Watch the replay](https://simonw.github.io/battledrones/?replay=battles/showcase/2026-10-11-dune-sea-7-gpt-6-luna-vs-gpt-6-luna.json) | [Read the record](https://simonw.github.io/battledrones/record-viewer.html?replay=battles/showcase/2026-10-11-dune-sea-7-gpt-6-luna-vs-gpt-6-luna.json) |
+| GPT-6 Luna vs GPT-6 Astra | Riverlands | Red (Astra) at 7:50 | [▶ Watch the replay](https://simonw.github.io/battledrones/?replay=battles/showcase/2026-10-11-riverlands-42-gpt-6-luna-vs-gpt-6-astra.json) | [Read the record](https://simonw.github.io/battledrones/record-viewer.html?replay=battles/showcase/2026-10-11-riverlands-42-gpt-6-luna-vs-gpt-6-astra.json) |
+
+The last two ended sooner as played (6:23 and 4:45). Their records were
+re-simulated on newer game code, and the models' last orders played on
+(`battles/showcase/README.md`). The game and the viewer both open any battle
+record from its link, `?replay=`. The link can be relative to the site, any URL
+whose server allows cross-origin reads (CORS), a file on GitHub or a Gist.
+
+## Features
+
 - **Pick an opener, play from second one**: every match starts on three
   cards — Blitz (Fab Plant + 3 Stingers), Industry (a third harvester +
   scrap) or Air Wing (Airpad + 3 Wasps) — and the AI picks its own.
@@ -179,6 +201,8 @@ npm run maps           # export map grids to art/maps/*.json (--ascii to preview
                        # model gallery: npm run dev, then open /tools/models.html
                        #   (?only=units|buildings|condor|condor-ring, ?anim=walk|idle|aim|fall for the robots)
                        # vehicles reference page: /vehicles.html (built into dist/ too)
+                       # battle record viewer: /record-viewer.html[?replay=<record>] (built into dist/ too,
+                       #   with battles/showcase/; the game takes ?replay=<record> as well)
 node tools/shots.mjs   # screenshot tour against the dev server (SPECTATE=1, MAP=...)
 node tools/showcase.mjs  # staged close-up skirmish for checking weapon effects
 ```
@@ -193,7 +217,8 @@ npm run arena run -- --blue scripted --red ai:rush:hard    # built-in seats, no 
 npm run arena serve -- --blue seat --red ai:balanced:easy  # seat URLs for any agent (HTTP or MCP)
 npm run arena replay battles/<file>.json                   # re-run a record, check its hash trail
 npm run arena upgrade battles/<file>.json                  # bring a record from older sim code up to this one
-npm run arena watch battles/<file>.json                    # the dev-only 3D viewer (&follow: live)
+npm run arena watch battles/<file>.json                    # the 3D viewer on the dev server (&follow: live)
+                                                           # (any build: /?replay=<record>, or /record-viewer.html?replay=<record>)
 npm run arena stats -- battles/*.json --detail             # results by model, side, map, opener
 ```
 

@@ -2,8 +2,9 @@
 // and checks the hash trail in the browser: the replay must match the battle
 // the arena recorded (Chromium runs the same JavaScript engine as Node).
 // Usage: node tools/arena-viewer-check.mjs battles/<file>.json [--paste] [--prod] [--shot out.png]
-//   --paste  load it the way a player does: menu → "Watch a replay", paste the JSON
+//   --paste  load it the way a player does: menu → "Watch a replay", paste the JSON (else by its link, /?replay=<file>)
 //   --prod   against the production build in dist/ (npm run build first) instead of the dev server
+//            (by link, only battles/showcase/ records: the build serves those)
 // Starts its own Vite server on a free port.
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
@@ -23,10 +24,6 @@ const root = resolve(import.meta.dirname, "..");
 const record = JSON.parse(readFileSync(file, "utf8"));
 const ref = relative(root, resolve(file)).replaceAll("\\", "/");
 const port = 5200 + Math.floor(Math.random() * 500);
-if (prod && !paste) {
-  console.error("--prod needs --paste: production builds load replays only from the menu");
-  process.exit(1);
-}
 const vite = spawn("npx", ["vite", ...(prod ? ["preview"] : []), "--port", String(port), "--strictPort"], { cwd: root, stdio: ["ignore", "pipe", "inherit"], detached: true });
 await new Promise((ok) => vite.stdout.on("data", (d) => String(d).includes("Local") && ok()));
 const exe = ["/opt/pw-browsers/chromium", "/opt/pw-browsers/chromium-1194/chrome-linux/chrome"].find((p) => existsSync(p));

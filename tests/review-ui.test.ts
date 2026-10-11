@@ -17,7 +17,7 @@ import { GestureRecognizer } from "../src/game/gestures";
 import { gameMode, rematchToken } from "../src/game/mode";
 import { UnitVoices } from "../src/game/voices";
 import { dailyOp, today } from "../src/game/daily";
-import { Fullscreen, type FullscreenEnv } from "../src/ui/fullscreen";
+import { Fullscreen, reloadWithoutLink, type FullscreenEnv } from "../src/ui/fullscreen";
 
 describe("a watched Last Stand ends on a lament", () => {
   it("resolves the score: fanfare for a win, a record or a watched skirmish; lament for a watched Last Stand", () => {
@@ -216,5 +216,20 @@ describe("the finale takes the camera from a gesture in progress", () => {
     g.down(touch(3, 50, 50), 3000);
     g.up(touch(3, 50, 50), 3100);
     expect(cb.onTap).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("a replay opened by its link", () => {
+  const page = (href: string) => {
+    const went: string[] = [];
+    return { href, went, reload: () => void went.push("reload"), assign: (u: string | URL) => void went.push(String(u)) };
+  };
+  it("Menu and Rematch leave the ?replay= link behind instead of watching it again", () => {
+    const linked = page("https://example.com/battledrones/?replay=battles/showcase/a.json&follow&debug#x");
+    reloadWithoutLink(linked);
+    expect(linked.went).toEqual(["https://example.com/battledrones/?debug=#x"]);
+    const plain = page("https://example.com/battledrones/?debug");
+    reloadWithoutLink(plain);
+    expect(plain.went).toEqual(["reload"]);
   });
 });

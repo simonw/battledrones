@@ -116,7 +116,8 @@ function chartHtml(ctx: ReportContext): string | null {
     })
     .join("");
   const mid = fmtTime(T / 2);
-  const label = (f: Faction) => (ctx.spectator ? `${sideName(f, ctx)} · ${ctx.strategies?.[f] ?? ""}` : sideName(f, ctx));
+  // (a replay's labels are its players' names, from a record that may have come from anywhere: escaped)
+  const label = (f: Faction) => (ctx.spectator ? `${sideName(f, ctx)} · ${escapeHtml(ctx.strategies?.[f] ?? "")}` : sideName(f, ctx));
   return `
     <div class="aar-legend">
       <span class="lk blue"><i></i>${label("blue")}</span>
@@ -218,7 +219,7 @@ function headHtml(ctx: ReportContext): string {
   const title = spec ? `${ctx.winner.toUpperCase()} WINS` : ctx.won ? "VICTORY" : "DEFEAT";
   const cls = spec ? (ctx.winner === "blue" ? "win" : "lose") : ctx.won ? "win" : "lose";
   const vs = spec
-    ? `${ctx.strategies?.blue ?? "Blue"} vs ${ctx.strategies?.red ?? "Red"}`
+    ? escapeHtml(`${ctx.strategies?.blue ?? "Blue"} vs ${ctx.strategies?.red ?? "Red"}`)
     : `vs ${ctx.enemy.strategy} AI (${ctx.enemy.difficulty})`;
   return `<h1 class="${cls}">${title}</h1><p class="time">${vs} · ${fmtTime(ctx.secs)}</p>`;
 }

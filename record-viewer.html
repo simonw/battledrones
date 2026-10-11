@@ -1,0 +1,978 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Battle Drones Record Viewer</title>
+<link rel="icon" href="./icons/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@400;500;600&family=Saira+Stencil+One&display=swap">
+<style>
+/* A battle record (AGENT-BATTLES.md "Battle records") round by round. Open one from a file, by pasting or dropping it,
+   or by its link: ?replay=<record> (relative to this page, any CORS-enabled URL, a file on GitHub or a Gist), which bookmarks. */
+/* Layout: sand-table battlefield on the left, round dispatches in the middle, raw JSON always open on the right (stacks on small screens). */
+:root {
+  --bg: #ECEAE4; --panel: #F8F7F3; --ink: #1D2025; --muted: #666864; --line: #D5D1C5;
+  --sand: #E4D0A3; --dune: #CFB57E; --sand-ink: #6E5730;
+  --blue: #1F55C8; --blue-soft: #DCE5F8; --red: #C63C21; --red-soft: #F6DED6;
+  --ok: #3B7536; --bad: #B0301D; --hit: #FFF0BF; --hit-line: #D99A12; --lit: #FFE08A;
+  --j-key: #44536C; --j-str: #4C6A1B; --j-num: #985710; --j-lit: #7A49A6; --j-punc: #8B8D88;
+  --f-display: "Saira Stencil One", "Arial Narrow", Impact, sans-serif;
+  --f-ui: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #131518; --panel: #1B1E22; --ink: #E7E4DC; --muted: #9C998F; --line: #2E3237;
+  --sand: #3A3225; --dune: #4D4231; --sand-ink: #C2A673;
+  --blue: #7BA3FF; --blue-soft: #1D2B48; --red: #FF8166; --red-soft: #48241C;
+  --ok: #8BC783; --bad: #FF8D76; --hit: #352C12; --hit-line: #E3AE37; --lit: #5A4712;
+  --j-key: #A3B3CF; --j-str: #B9D483; --j-num: #F0B46C; --j-lit: #CBA4F1; --j-punc: #6F726F;
+  color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #131518; --panel: #1B1E22; --ink: #E7E4DC; --muted: #9C998F; --line: #2E3237;
+  --sand: #3A3225; --dune: #4D4231; --sand-ink: #C2A673;
+  --blue: #7BA3FF; --blue-soft: #1D2B48; --red: #FF8166; --red-soft: #48241C;
+  --ok: #8BC783; --bad: #FF8D76; --hit: #352C12; --hit-line: #E3AE37; --lit: #5A4712;
+  --j-key: #A3B3CF; --j-str: #B9D483; --j-num: #F0B46C; --j-lit: #CBA4F1; --j-punc: #6F726F;
+  color-scheme: dark; }
+
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+[hidden] { display: none !important; }
+body { background: var(--bg); color: var(--ink); font-family: var(--f-ui); font-size: 15px; line-height: 1.45; }
+button, select, input { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--hit-line); outline-offset: 2px; }
+.mono { font-family: var(--f-mono); font-variant-numeric: tabular-nums; }
+.label { font-size: 11.5px; letter-spacing: .09em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+.label a { color: inherit; }
+
+/* ---------- header ---------- */
+.top { padding: 14px 16px 12px; border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 10px 24px; align-items: end; justify-content: space-between; }
+.brand { display: grid; gap: 4px; min-width: 0; }
+.brand h1 { margin: 0; font-family: var(--f-display); font-weight: 400; font-size: clamp(30px, 4.4vw, 44px); line-height: .95; letter-spacing: .02em; text-wrap: balance; }
+.brand h1 small { font-family: var(--f-mono); font-size: 14px; letter-spacing: 0; color: var(--muted); margin-left: 8px; vertical-align: middle; }
+.matchup { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; font-size: 14.5px; }
+.fac { display: inline-flex; gap: 6px; align-items: baseline; }
+.fac b { font-weight: 600; }
+.fac.blue b { color: var(--blue); } .fac.red b { color: var(--red); }
+.fac .op { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+.vs { color: var(--muted); font-size: 12px; }
+.top-right { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.result { display: inline-flex; align-items: center; gap: 8px; padding: 5px 10px; border-radius: 4px; font-weight: 600; font-size: 14px; border: 1px solid currentColor; }
+.result.blue { color: var(--blue); background: var(--blue-soft); }
+.result.red { color: var(--red); background: var(--red-soft); }
+.result.none { color: var(--muted); }
+.btn { border: 1px solid var(--line); background: var(--panel); border-radius: 4px; padding: 5px 10px; cursor: pointer; font-size: 13.5px; }
+.btn:hover { border-color: var(--muted); }
+.meta { width: 100%; display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12.5px; color: var(--muted); }
+.meta span b { color: var(--ink); font-weight: 500; }
+.msg { margin: 10px 16px 0; padding: 8px 12px; border: 1px solid var(--line); color: var(--muted); border-radius: 4px; font-size: 13.5px; overflow-wrap: anywhere; }
+.msg.error { border-color: var(--bad); color: var(--bad); }
+.urlform { display: flex; gap: 6px; flex: 1 1 280px; min-width: 0; max-width: 460px; }
+.urlform input { flex: 1; min-width: 0; border: 1px solid var(--line); background: var(--panel); border-radius: 4px; padding: 5px 8px; font-family: var(--f-mono); font-size: 12.5px; }
+
+/* ---------- nothing open yet ---------- */
+.welcome { padding: 16px; max-width: 820px; display: grid; gap: 14px; }
+.welcome p { margin: 0; max-width: 68ch; }
+.welcome code { font-family: var(--f-mono); font-size: .9em; }
+.welcome a { color: var(--blue); }
+.battles { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.battles li { background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 10px 14px; display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: baseline; }
+.battles .open { font-weight: 600; font-size: 16px; color: var(--ink); }
+.battles .how { color: var(--muted); font-size: 13.5px; }
+.battles .game { margin-left: auto; font-size: 13.5px; }
+
+/* ---------- main grid ---------- */
+.app { display: grid; gap: 16px; padding: 16px; grid-template-columns: minmax(0, 1fr); }
+.col { min-width: 0; display: flex; flex-direction: column; gap: 14px; }
+.col > * { flex-shrink: 0; }
+.col.json > .jsonbox { flex-shrink: 1; }
+.colhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 28px; }
+@media (min-width: 780px) {
+  .app { grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); }
+  .col.json { grid-column: 1 / -1; }
+  .jsonbox { height: 60vh; }
+}
+@media (min-width: 1240px) {
+  html, body { height: 100%; }
+  body { display: flex; flex-direction: column; }
+  .app { flex: 1; min-height: 0; grid-template-columns: minmax(380px, 1.05fr) minmax(0, 1fr) minmax(0, 1fr); }
+  .col { overflow-y: auto; min-height: 0; padding-right: 4px; }
+  .col.json { grid-column: auto; overflow: hidden; }
+  .jsonbox { height: auto; flex: 1; min-height: 0; }
+}
+
+/* ---------- map ---------- */
+.mapwrap { position: relative; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--sand); }
+#map { display: block; width: 100%; height: auto; touch-action: manipulation; }
+.sandbg { fill: var(--sand); }
+.dune { fill: none; stroke: var(--dune); stroke-width: .12; }
+.grid { stroke: var(--sand-ink); stroke-opacity: .18; stroke-width: .06; }
+.gridlab { fill: var(--sand-ink); font-family: var(--f-mono); font-size: 1.05px; opacity: .8; }
+.u { stroke: var(--sand); stroke-width: .14; }
+.u.blue, .seg.blue .head { fill: var(--blue); } .u.red, .seg.red .head { fill: var(--red); }
+.seg line { stroke-width: .2; stroke-linecap: round; }
+.seg.blue line { stroke: var(--blue); } .seg.red line { stroke: var(--red); }
+.seg.am line { stroke-dasharray: .55 .4; }
+.atk { fill: none; stroke-width: .16; }
+.atk.blue { stroke: var(--blue); } .atk.red { stroke: var(--red); }
+.bld rect { stroke-width: .16; }
+.bld.blue rect { fill: var(--blue-soft); stroke: var(--blue); } .bld.red rect { fill: var(--red-soft); stroke: var(--red); }
+.bld.new rect { stroke-width: .32; }
+.bld text { font-family: var(--f-mono); font-size: 1.05px; font-weight: 500; text-anchor: middle; dominant-baseline: central; }
+.bld.blue text { fill: var(--blue); } .bld.red text { fill: var(--red); }
+.rally path { stroke-width: .12; }
+.rally.blue path { fill: var(--blue); stroke: var(--blue); } .rally.red path { fill: var(--red); stroke: var(--red); }
+.hv { fill: none; stroke: var(--sand-ink); stroke-width: .14; }
+.cd circle { stroke-width: .22; stroke-dasharray: .5 .35; }
+.cd.blue circle { fill: var(--blue); fill-opacity: .12; stroke: var(--blue); } .cd.red circle { fill: var(--red); fill-opacity: .12; stroke: var(--red); }
+.cd text { font-family: var(--f-display); font-size: 1.5px; text-anchor: middle; letter-spacing: .08px; }
+.cd.blue text { fill: var(--blue); } .cd.red text { fill: var(--red); }
+.lm path { stroke: var(--sand); stroke-width: .15; }
+.lm.blue path { fill: var(--blue); } .lm.red path { fill: var(--red); }
+.lm text { font-family: var(--f-ui); font-weight: 600; font-size: 1.3px; paint-order: stroke; stroke: var(--sand); stroke-width: .35px; }
+.lm.blue text { fill: var(--blue); } .lm.red text { fill: var(--red); }
+.ping { fill: none; stroke: var(--ink); stroke-width: .22; }
+.ping-dot { fill: var(--ink); }
+.uhi { fill: none; stroke: var(--ink); stroke-width: .22; }
+@media (prefers-reduced-motion: no-preference) {
+  .ping { animation: ping 1.2s ease-out infinite; transform-box: fill-box; transform-origin: center; }
+  @keyframes ping { from { opacity: 1; transform: scale(.4); } to { opacity: 0; transform: scale(1.4); } }
+}
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12.5px; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 5px; }
+.legend svg { width: 16px; height: 12px; }
+.lg-line { stroke: var(--muted); stroke-width: 1.6; }
+.lg-fill { fill: var(--muted); }
+.lg-stroke { fill: none; stroke: var(--muted); stroke-width: 1.4; }
+.caveat { font-size: 12.5px; color: var(--muted); margin: 0; max-width: 60ch; }
+
+/* ---------- timeline ---------- */
+.timeline { display: grid; gap: 8px; }
+.strip { position: relative; height: 64px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); cursor: pointer; touch-action: none; }
+.strip svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.sb.blue { fill: var(--blue); } .sb.red { fill: var(--red); }
+.sb { opacity: .75; }
+.smid { stroke: var(--line); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.scur { fill: var(--hit-line); fill-opacity: .28; stroke: var(--hit-line); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.scd { fill: var(--ink); }
+.ruler { display: flex; justify-content: space-between; gap: 12px; text-align: center; font-size: 11.5px; color: var(--muted); }
+.controls { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.ctl { width: 34px; height: 32px; display: grid; place-items: center; border: 1px solid var(--line); background: var(--panel); border-radius: 4px; cursor: pointer; padding: 0; }
+.ctl:hover { border-color: var(--muted); }
+.ctl svg { width: 14px; height: 14px; fill: var(--ink); }
+.ctl.play { width: 44px; background: var(--ink); border-color: var(--ink); }
+.ctl.play svg { fill: var(--bg); }
+.where { margin-left: auto; text-align: right; font-size: 13px; line-height: 1.25; }
+.where b { font-size: 15px; }
+#speed { border: 1px solid var(--line); background: var(--panel); border-radius: 4px; padding: 4px 6px; font-size: 13px; }
+
+/* ---------- totals ---------- */
+.totals { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+.totals th, .totals td { text-align: left; vertical-align: top; padding: 6px 6px; border-top: 1px solid var(--line); }
+.totals th { font-weight: 500; color: var(--muted); width: 26%; }
+.totals thead th { border-top: 0; font-weight: 600; }
+.totals thead th.blue { color: var(--blue); } .totals thead th.red { color: var(--red); }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.chip { font-size: 12px; border: 1px solid var(--line); border-radius: 3px; padding: 0 5px; white-space: nowrap; background: var(--panel); }
+.chip i { font-style: normal; color: var(--muted); }
+
+/* ---------- round detail ---------- */
+.roundhead { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; }
+.roundhead h2 { margin: 0; font-family: var(--f-display); font-weight: 400; font-size: 30px; line-height: 1; }
+.roundhead .sub { color: var(--muted); font-size: 13px; }
+.final { border: 1px solid currentColor; border-radius: 4px; padding: 8px 12px; font-weight: 600; }
+.final.blue { color: var(--blue); background: var(--blue-soft); } .final.red { color: var(--red); background: var(--red-soft); } .final.none { color: var(--muted); }
+.side { background: var(--panel); border: 1px solid var(--line); border-top: 3px solid var(--fc); border-radius: 4px; padding: 12px 14px; display: grid; gap: 9px; min-width: 0; }
+.side.blue { --fc: var(--blue); } .side.red { --fc: var(--red); }
+.side header { display: flex; flex-wrap: wrap; gap: 2px 10px; align-items: baseline; }
+.side header b { color: var(--fc); font-size: 16px; }
+.side header .who { font-family: var(--f-mono); font-size: 12.5px; }
+.side header .usage { margin-left: auto; font-size: 12px; color: var(--muted); }
+.radio { margin: 0; padding: 6px 10px; border-left: 3px solid var(--fc); background: var(--bg); font-style: italic; border-radius: 0 3px 3px 0; }
+.notes { margin: 0; overflow-wrap: anywhere; }
+.results { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: 13.5px; }
+.results li { display: grid; grid-template-columns: auto auto minmax(0, 1fr); gap: 8px; align-items: baseline; }
+.results .n { font-family: var(--f-mono); font-size: 11.5px; color: var(--muted); }
+.st { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; padding: 0 5px; border-radius: 3px; border: 1px solid currentColor; }
+.st.ok { color: var(--ok); } .st.refused { color: var(--bad); }
+.results .txt { overflow-wrap: anywhere; }
+.verb { font-family: var(--f-mono); font-size: 12px; color: var(--muted); }
+.framenote, .cmdline { font-size: 12.5px; color: var(--muted); margin: 0; }
+.empty { color: var(--muted); font-style: italic; margin: 0; }
+[data-x], [data-unit] { border-bottom: 1px dotted var(--fc, var(--muted)); cursor: help; font-family: var(--f-mono); font-size: .9em; }
+[data-x]:hover, [data-unit]:hover, [data-x].pinned { background: var(--hit); }
+
+/* ---------- raw json ---------- */
+.seg-ctl { display: inline-flex; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
+.seg-ctl button { border: 0; background: var(--panel); padding: 4px 10px; font-size: 13px; cursor: pointer; }
+.seg-ctl button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
+.jsontools { display: flex; gap: 6px; align-items: center; }
+.jsonbox { position: relative; overflow: auto; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); font-family: var(--f-mono); font-size: 12px; line-height: 1.55; min-height: 320px; height: 70vh; }
+.jl { padding: 0 10px 0 12px; white-space: pre-wrap; overflow-wrap: anywhere; border-left: 3px solid transparent; }
+.jl.click { cursor: pointer; }
+.jl.click:hover { background: var(--bg); }
+.jl.hit { background: var(--hit); border-left-color: var(--hit-line); }
+.jl.lit, .jblock.lit pre { background: var(--lit); }
+.jblock { border-bottom: 1px solid var(--line); }
+.jblock .path { position: sticky; top: 0; background: var(--panel); padding: 6px 12px 2px; font-size: 11.5px; color: var(--muted); display: flex; gap: 8px; }
+.jblock .path b { color: var(--ink); font-weight: 500; }
+.jblock .path .tag { color: var(--fc, var(--muted)); }
+.jblock.blue { --fc: var(--blue); } .jblock.red { --fc: var(--red); }
+.jblock pre { margin: 0; padding: 2px 12px 10px; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; border-left: 3px solid var(--fc, transparent); }
+.k { color: var(--j-key); } .s { color: var(--j-str); } .nm { color: var(--j-num); } .l { color: var(--j-lit); } .p { color: var(--j-punc); }
+.jnote { font-size: 12.5px; color: var(--muted); margin: 0; }
+
+.tip { position: fixed; z-index: 10; pointer-events: none; background: var(--ink); color: var(--bg); padding: 5px 8px; border-radius: 4px; font-size: 12.5px; max-width: 280px; line-height: 1.35; }
+.drop { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; background: color-mix(in srgb, var(--bg) 85%, transparent); border: 3px dashed var(--hit-line); font-family: var(--f-display); font-size: 32px; }
+.drop[hidden], .tip[hidden] { display: none; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <div class="label" id="eyebrow">Battle Drones</div>
+    <h1 id="title">Battle records</h1>
+    <div class="matchup" id="matchup"></div>
+  </div>
+  <div class="top-right">
+    <span id="result" class="result none" hidden></span>
+    <form class="urlform" id="urlform">
+      <label class="sr" for="url">Link to a battle record</label>
+      <input id="url" type="text" inputmode="url" placeholder="Link to a record, or a Gist" spellcheck="false" autocomplete="off">
+      <button class="btn" type="submit">Load</button>
+    </form>
+    <label class="btn" for="file">Open record…<input id="file" class="sr" type="file" accept=".json,application/json"></label>
+  </div>
+  <div class="meta" id="meta"></div>
+</header>
+<div id="msg" class="msg" role="status" hidden></div>
+
+<section class="welcome" id="welcome" hidden>
+  <p>Read an agent battle round by round: each commander's orders, notes and radio lines, on a map of where things were sent, beside the raw JSON. A battle record is the <code>.json</code> file an agent battle writes to <code>battles/</code>.</p>
+  <p>Open one from your computer, drop it on the page or paste it. Or load one by its link: any URL whose server allows other sites to read it (CORS), a file on GitHub, or a Gist. The link goes in the address bar as <code>?replay=</code>, so you can bookmark it or pass it on.</p>
+  <div class="label">The showcase battles</div>
+  <ul class="battles">
+    <li><a class="open" href="?replay=battles/showcase/2026-10-11-riverlands-42-gpt-6-luna-vs-gpt-6-luna.json">GPT-6 Luna vs GPT-6 Luna</a><span class="how">Riverlands · Industry vs Industry · blue wins at 4:31</span><a class="game" href="./?replay=battles/showcase/2026-10-11-riverlands-42-gpt-6-luna-vs-gpt-6-luna.json">▶ Watch it in the game</a></li>
+    <li><a class="open" href="?replay=battles/showcase/2026-10-11-dune-sea-7-gpt-6-luna-vs-gpt-6-luna.json">GPT-6 Luna vs GPT-6 Luna</a><span class="how">Dune Sea · Blitz vs Industry · blue wins at 7:52 (6:23 as played)</span><a class="game" href="./?replay=battles/showcase/2026-10-11-dune-sea-7-gpt-6-luna-vs-gpt-6-luna.json">▶ Watch it in the game</a></li>
+    <li><a class="open" href="?replay=battles/showcase/2026-10-11-riverlands-42-gpt-6-luna-vs-gpt-6-astra.json">GPT-6 Luna vs GPT-6 Astra</a><span class="how">Riverlands · Industry vs Industry · red wins at 7:50 (4:45 as played)</span><a class="game" href="./?replay=battles/showcase/2026-10-11-riverlands-42-gpt-6-luna-vs-gpt-6-astra.json">▶ Watch it in the game</a></li>
+  </ul>
+</section>
+
+<main class="app" hidden>
+  <section class="col field" aria-label="Battlefield">
+    <div class="colhead"><span class="label">Battlefield · true map coordinates</span></div>
+    <div class="mapwrap"><svg id="map" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Map of orders this round"></svg></div>
+    <div class="legend" aria-label="Map legend">
+      <span><svg viewBox="0 0 16 12"><circle class="lg-fill" cx="8" cy="6" r="4"/></svg>unit's latest destination</span>
+      <span><svg viewBox="0 0 16 12"><line class="lg-line" x1="1" y1="6" x2="15" y2="6"/></svg>move this round</span>
+      <span><svg viewBox="0 0 16 12"><line class="lg-line" x1="1" y1="6" x2="15" y2="6" stroke-dasharray="3 2"/></svg>attack-move</span>
+      <span><svg viewBox="0 0 16 12"><circle class="lg-stroke" cx="8" cy="6" r="4.5"/></svg>attacking</span>
+      <span><svg viewBox="0 0 16 12"><rect class="lg-stroke" x="3" y="1.5" width="10" height="9"/></svg>building placed</span>
+      <span><svg viewBox="0 0 16 12"><path class="lg-fill" d="M4 11V1l9 3-8 3z"/></svg>rally point</span>
+      <span><svg viewBox="0 0 16 12"><path class="lg-stroke" d="M8 1l5 5-5 5-5-5z"/></svg>harvest site</span>
+      <span><svg viewBox="0 0 16 12"><circle class="lg-stroke" cx="8" cy="6" r="5" stroke-dasharray="2 1.5"/></svg>calldown</span>
+    </div>
+    <p class="caveat">The record stores orders, not unit positions, so markers show where things were sent. Hover a marker, a coordinate or a <span class="mono">#id</span> in the notes to find it on the map.</p>
+    <div class="timeline">
+      <div class="strip" id="strip" role="slider" tabindex="0" aria-label="Round" aria-valuemin="0"><svg id="stripsvg" preserveAspectRatio="none"></svg></div>
+      <div class="ruler mono" id="ruler"></div>
+      <div class="controls">
+        <button class="ctl" id="first" aria-label="First round"><svg viewBox="0 0 14 14"><path d="M2 1h2v12H2zM13 1v12L5 7z"/></svg></button>
+        <button class="ctl" id="prev" aria-label="Previous round"><svg viewBox="0 0 14 14"><path d="M11 1v12L3 7z"/></svg></button>
+        <button class="ctl play" id="play" aria-label="Play"><svg viewBox="0 0 14 14" id="playicon"><path d="M3 1v12l10-6z"/></svg></button>
+        <button class="ctl" id="next" aria-label="Next round"><svg viewBox="0 0 14 14"><path d="M3 1v12l8-6z"/></svg></button>
+        <button class="ctl" id="last" aria-label="Last round"><svg viewBox="0 0 14 14"><path d="M10 1h2v12h-2zM1 1v12l8-6z"/></svg></button>
+        <label class="sr" for="speed">Playback speed</label>
+        <select id="speed"><option value="1600">0.5×</option><option value="900" selected>1×</option><option value="450">2×</option><option value="200">4×</option></select>
+        <div class="where" id="where"></div>
+      </div>
+    </div>
+    <div>
+      <div class="colhead"><span class="label" id="totlabel">So far</span></div>
+      <table class="totals" id="totals"></table>
+    </div>
+  </section>
+
+  <section class="col detail" aria-label="Round detail" id="detail"></section>
+
+  <section class="col json" aria-label="Raw JSON">
+    <div class="colhead">
+      <span class="label">Raw JSON</span>
+      <div class="jsontools">
+        <div class="seg-ctl" role="group" aria-label="JSON scope">
+          <button id="jmRound" aria-pressed="true">This round</button>
+          <button id="jmFile" aria-pressed="false">Whole file</button>
+        </div>
+        <button class="btn" id="copy">Copy</button>
+      </div>
+    </div>
+    <p class="jnote" id="jnote"></p>
+    <div class="jsonbox" id="jsonbox" tabindex="0" aria-label="Raw JSON"></div>
+  </section>
+</main>
+<div class="tip" id="tip" hidden></div>
+<div class="drop" id="drop" hidden>Drop a battle record</div>
+
+<script>
+(() => {
+"use strict";
+const $ = (s) => document.querySelector(s);
+const NS = "http://www.w3.org/2000/svg";
+const SIDES = ["blue", "red"];
+const TPS = 10; // ticks per second (matches the clock times the players write in their notes)
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+const fmtT = (t) => { const s = Math.floor(t / TPS); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); };
+const k = (n) => { n = num(n); return n >= 1e6 ? (n / 1e6).toFixed(2) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "k" : String(n); };
+const other = (s) => (s === "blue" ? "red" : "blue");
+// A record can come from any link (?replay=): what reaches the page as markup is a number, a side or escaped text.
+const num = (v) => (Number.isFinite(+v) ? +v : 0);
+const sideOf = (s) => (SIDES.includes(s) ? s : null);
+
+let RAW = "", D = null, M = null, cur = 0, jsonMode = "round", timer = null, pinned = null;
+
+// ------------------------------------------------------------- model ---
+function build(d) {
+  const turns = (Array.isArray(d.turns) ? d.turns : []).map((t) => {
+    const side = Array.isArray(t) ? sideOf(t[1]) : null;
+    return [num(t?.[0]), side, side && Array.isArray(t[2]) ? t[2].filter((c) => c && typeof c === "object") : []];
+  });
+  const log = (Array.isArray(d.log) ? d.log : []).map((e) => (e && typeof e === "object" ? e : {}));
+  const sided = log.filter((e) => sideOf(e.side));
+  const radio = (Array.isArray(d.radio) ? d.radio : []).map((x) => (Array.isArray(x) ? [num(x[0]), sideOf(x[1]), String(x[2] ?? "")] : [0, null, ""]));
+  const end = d.end && typeof d.end === "object" ? { tick: num(d.end.tick), winner: sideOf(d.end.winner), reason: String(d.end.reason ?? "") } : null;
+  const per = num(d.round) || 50;
+  // Rounds come from the log; a record without one falls back to tick buckets.
+  let rounds = [];
+  const seen = new Map();
+  log.forEach((e, i) => {
+    if (!sideOf(e.side)) return;
+    let r = seen.get(num(e.round));
+    if (!r) { r = { round: num(e.round), tick: num(e.tick), entries: { blue: [], red: [] } }; seen.set(r.round, r); rounds.push(r); }
+    r.entries[e.side].push(i);
+  });
+  if (!rounds.length) {
+    const ticks = [...new Set(turns.map((t) => Math.floor(t[0] / per) * per))].sort((a, b) => a - b);
+    rounds = ticks.map((t, i) => ({ round: i + 1, tick: t, entries: { blue: [], red: [] } }));
+    if (!rounds.length) rounds = [{ round: 0, tick: 0, entries: { blue: [], red: [] } }];
+  }
+  rounds.sort((a, b) => a.tick - b.tick || a.round - b.round);
+  const roundOf = (t) => { let lo = 0; for (let i = 0; i < rounds.length; i++) if (rounds[i].tick <= t) lo = i; return lo; };
+  rounds.forEach((r) => { r.turns = []; r.radio = []; r.hashes = []; r.cmds = { blue: 0, red: 0 }; r.calldowns = 0; r.refused = { blue: 0, red: 0 }; });
+  const turnRound = turns.map((t, i) => { const ri = roundOf(t[0]); rounds[ri].turns.push(i); rounds[ri].cmds[t[1]] = (rounds[ri].cmds[t[1]] || 0) + (t[2] || []).length; rounds[ri].calldowns += (t[2] || []).filter((c) => c.type === "calldown").length; return ri; });
+  radio.forEach((r, i) => rounds[roundOf(r[0])].radio.push(i));
+  // A hash at tick t is the world after the step that reached t, so it belongs with the round that played tick t-1.
+  (Array.isArray(d.hashes) ? d.hashes : []).forEach((h, i) => rounds[roundOf(Math.max(0, num(h?.[0]) - 1))].hashes.push(i));
+  rounds.forEach((r) => SIDES.forEach((s) => (r.entries[s] || []).forEach((i) => (log[i].results || []).forEach((x) => { if (/^\d+\.\s*refused/.test(x)) r.refused[s]++; }))));
+  const endRound = end ? roundOf(end.tick) : -1;
+
+  // Frame: each side's log uses its own frame; turns use the true map. Work out the mirror from paired coordinates.
+  const frame = inferFrame(d, turns, sided);
+  const kinds = inferKinds(turns, sided);
+  const landmarks = inferLandmarks(d, turns, sided, frame);
+  return { d, turns, log, radio, end, rounds, turnRound, endRound, frame, kinds, landmarks, per };
+}
+
+function coordsOf(o) {
+  const out = [];
+  for (const key of ["to", "at"]) { const v = o[key]; if (Array.isArray(v) && v.length === 2 && v.every((n) => typeof n === "number")) out.push(v); }
+  return out;
+}
+function inferFrame(d, turns, log) {
+  const byKey = new Map();
+  turns.forEach(([t, s, cmds]) => (cmds || []).forEach((c) => {
+    const p = "x" in c ? [c.x, c.y] : "tx" in c ? [c.tx + .5, c.ty + .5] : null;
+    if (p) { const key = t + "|" + s; (byKey.get(key) || byKey.set(key, []).get(key)).push(p); }
+  }));
+  const tallyW = new Map(), tallyH = new Map();
+  let maxX = 0, maxY = 0;
+  byKey.forEach((ps) => ps.forEach(([x, y]) => { maxX = Math.max(maxX, x); maxY = Math.max(maxY, y); }));
+  const mirrored = {};
+  const hitsId = { blue: 0, red: 0 }, pairs = { blue: [], red: [] };
+  log.forEach((e) => {
+    const ps = byKey.get(e.tick + "|" + e.side); if (!ps) return;
+    (e.orders || []).forEach((o) => coordsOf(o).forEach(([ox, oy]) => ps.forEach(([tx, ty]) => {
+      if (Math.abs(tx - (ox + .5)) < .01 && Math.abs(ty - (oy + .5)) < .01) hitsId[e.side]++;
+      pairs[e.side].push([ox, oy, tx, ty]);
+    })));
+  });
+  SIDES.forEach((s) => pairs[s].forEach(([ox, oy, tx, ty]) => {
+    const W = Math.round(tx - .5 + ox + 1), H = Math.round(ty - .5 + oy + 1);
+    tallyW.set(W, (tallyW.get(W) || 0) + 1); tallyH.set(H, (tallyH.get(H) || 0) + 1);
+  }));
+  const best = (m, fb) => { let bk = fb, bv = 0; m.forEach((v, key) => { if (v > bv) { bv = v; bk = key; } }); return Math.max(bk, fb); };
+  const W = best(tallyW, Math.ceil(maxX)), H = best(tallyH, Math.ceil(maxY));
+  SIDES.forEach((s) => {
+    let mir = 0;
+    pairs[s].forEach(([ox, oy, tx, ty]) => { if (Math.abs(tx - (W - 1 - ox + .5)) < .01 && Math.abs(ty - (H - 1 - oy + .5)) < .01) mir++; });
+    mirrored[s] = mir > hitsId[s];
+  });
+  return { W, H, mirrored };
+}
+function toTrue(side, x, y) {
+  const f = M.frame;
+  return f.mirrored[side] ? [f.W - 1 - x + .5, f.H - 1 - y + .5] : [x + .5, y + .5];
+}
+function inferKinds(turns, log) {
+  const vocab = new Set(["trooper", "harvester", "hq", "uplink", "turret"]);
+  turns.forEach((t) => t[2].forEach((c) => { if (c.unit) vocab.add(c.unit); if (c.building) vocab.add(c.building); }));
+  const kinds = new Map();
+  const put = (id, kind) => { if (vocab.has(kind) && !kinds.has(id)) kinds.set(id, kind); };
+  log.forEach((e) => {
+    (e.results || []).forEach((r) => {
+      const m = r.match(/^(\d+)\.\s*ok:\s*(?:(\d+) )?([a-z-]+?)s?(?: ×\d+)? (move|attack-move|attack|harvest|stop)\b/);
+      if (m) {
+        const o = (e.orders || [])[+m[1] - 1];
+        const ids = o && Object.values(o)[0];
+        if (Array.isArray(ids)) ids.forEach((x) => { const n = parseInt(String(x).replace("#", ""), 10); if (n) { vocab.add(m[3]); put(n, m[3]); } });
+      }
+      for (const mm of r.matchAll(/([a-z-]+) #(\d+)/gi)) put(+mm[2], mm[1].toLowerCase());
+    });
+    for (const mm of String(e.notes || "").matchAll(/([A-Za-z-]+) #(\d+)/g)) put(+mm[2], mm[1].toLowerCase());
+  });
+  return kinds;
+}
+function inferLandmarks(d, turns, log, frame) {
+  const verbMap = { rally: "rally", attack_move: "attackMove", move: "move" };
+  const tally = new Map();
+  const tmap = new Map(turns.map((t) => [t[0] + "|" + t[1], t[2] || []]));
+  log.forEach((e) => (e.orders || []).forEach((o) => {
+    const verb = Object.keys(o)[0];
+    if (typeof o.to !== "string" || o.to.startsWith("#") || !verbMap[verb]) return;
+    const cmds = tmap.get(e.tick + "|" + e.side); if (!cmds) return;
+    const known = (e.orders || []).flatMap(coordsOf).map(([x, y]) => frame.mirrored[e.side] ? [frame.W - 1 - x + .5, frame.H - 1 - y + .5] : [x + .5, y + .5]);
+    const c = cmds.find((c) => c.type === verbMap[verb] && "x" in c && !known.some(([x, y]) => Math.abs(x - c.x) < .01 && Math.abs(y - c.y) < .01));
+    if (!c) return;
+    const key = e.side + "|" + o.to + "|" + c.x + "|" + c.y;
+    tally.set(key, (tally.get(key) || 0) + 1);
+  }));
+  const bestBy = new Map();
+  tally.forEach((n, key) => { const [s, name, x, y] = key.split("|"); const id = s + "|" + name; if (!bestBy.has(id) || bestBy.get(id).n < n) bestBy.set(id, { side: s, name, x: +x, y: +y, n }); });
+  return [...bestBy.values()].map((l) => {
+    const owner = l.name === "enemy-hq" ? other(l.side) : l.name === "hq" || l.name === "own-hq" ? l.side : l.side;
+    const label = /hq/.test(l.name) ? cap(owner) + " HQ" : l.name;
+    return { ...l, owner, label };
+  });
+}
+
+// A record re-simulated on newer game code (tools/arena.ts upgrade) whose ending moved: how the battle really ended.
+function asPlayed() {
+  const u = Array.isArray(M.d.upgraded) && M.d.upgraded[0] && M.d.upgraded[0].end;
+  if (!u || typeof u !== "object" || !M.end) return null;
+  const was = { tick: num(u.tick), winner: sideOf(u.winner) };
+  if (was.winner === M.end.winner && Math.abs(was.tick - M.end.tick) < 10) return null;
+  return `${was.winner ? cap(was.winner) + " won" : "No one won"} at ${fmtT(was.tick)}`;
+}
+
+// What the orders say up to and including round ri.
+function stateAt(ri) {
+  const units = new Map(), rallies = new Map(), buildings = [], harvest = new Map(), calldowns = [], segs = [];
+  const pending = { blue: [], red: [] };
+  const stats = { blue: blankStats(), red: blankStats() };
+  M.turns.forEach((t, i) => {
+    const r = M.turnRound[i]; if (r > ri) return;
+    const [tick, side, cmds] = t;
+    (cmds || []).forEach((c) => {
+      const st = stats[side] || (stats[side] = blankStats());
+      st.cmds++;
+      const ids = c.unitIds || [];
+      switch (c.type) {
+        case "move": case "attackMove": case "harvest":
+          ids.forEach((id) => {
+            let u = units.get(id);
+            if (!u) { u = { id, side, x: null, y: null }; units.set(id, u); }
+            if (r === ri && u.x !== null && (u.x !== c.x || u.y !== c.y)) segs.push({ side, x1: u.x, y1: u.y, x2: c.x, y2: c.y, am: c.type === "attackMove", id });
+            Object.assign(u, { x: c.x, y: c.y, r, tick, mode: c.type });
+          });
+          if (c.type === "harvest") harvest.set(c.x + "," + c.y, { x: c.x, y: c.y, side, r });
+          break;
+        case "attack": ids.forEach((id) => { const u = units.get(id) || units.set(id, { id, side, x: null, y: null }).get(id); u.atk = r; u.target = c.targetId; u.r = r; u.tick = tick; u.mode = "attack"; }); break;
+        case "stop": ids.forEach((id) => { const u = units.get(id); if (u) { u.r = r; u.mode = "stop"; u.tick = tick; } }); break;
+        case "rally": rallies.set(c.buildingId, { side, x: c.x, y: c.y, r, id: c.buildingId }); break;
+        case "startBuilding": pending[side].push(c.building); break;
+        case "placeBuilding": {
+          const kind = pending[side].shift() || "building";
+          buildings.push({ side, kind, x: c.tx + .5, y: c.ty + .5, r, tick });
+          st.buildings[kind] = (st.buildings[kind] || 0) + 1; break;
+        }
+        case "produce": st.units[c.unit] = (st.units[c.unit] || 0) + 1; break;
+        case "calldown": calldowns.push({ side, power: c.power, x: c.x, y: c.y, r, tick }); st.calldowns[c.power] = (st.calldowns[c.power] || 0) + 1; break;
+        case "sell": st.sold++; break;
+      }
+    });
+  });
+  for (let i = 0; i <= ri; i++) SIDES.forEach((s) => (stats[s].refused += M.rounds[i].refused[s] || 0));
+  return { units, rallies, buildings, harvest, calldowns, segs, stats };
+}
+function blankStats() { return { cmds: 0, refused: 0, units: {}, buildings: {}, calldowns: {}, sold: 0 }; }
+
+// ------------------------------------------------------------- map ---
+function svg(tag, attrs, parent) { const e = document.createElementNS(NS, tag); for (const a in attrs) e.setAttribute(a, attrs[a]); if (parent) parent.appendChild(e); return e; }
+function rng(seed) { let s = (seed >>> 0) || 1; return () => ((s = Math.imul(s ^ (s >>> 15), 0x2c1b3c6d) + 0x6d2b79f5 | 0) >>> 0) / 4294967296; }
+
+function drawBase() {
+  const map = $("#map"); map.innerHTML = "";
+  const { W, H } = M.frame, pad = 2.2;
+  map.setAttribute("viewBox", `${-pad} ${-pad} ${W + pad * 2} ${H + pad * 2}`);
+  svg("rect", { class: "sandbg", x: -pad, y: -pad, width: W + pad * 2, height: H + pad * 2 }, map);
+  const r = rng((M.d.seed || 7) * 9973 + W);
+  const dunes = svg("g", {}, map);
+  for (let y = 1; y < H; y += 2.6) {
+    const a = .5 + r() * .9, f = .12 + r() * .18, ph = r() * 6.28;
+    let p = `M0 ${y.toFixed(2)}`;
+    for (let x = 0; x <= W; x += 1) p += ` L${x} ${(y + Math.sin(x * f + ph) * a + Math.sin(x * f * 2.7 + ph * 1.7) * a * .35).toFixed(2)}`;
+    svg("path", { class: "dune", d: p }, dunes);
+  }
+  const g = svg("g", {}, map);
+  const step = W > 80 ? 16 : 8;
+  for (let x = 0; x <= W; x += step) { svg("line", { class: "grid", x1: x, y1: 0, x2: x, y2: H }, g); svg("text", { class: "gridlab", x, y: -0.7, "text-anchor": "middle" }, g).textContent = x; }
+  for (let y = 0; y <= H; y += step) { svg("line", { class: "grid", x1: 0, y1: y, x2: W, y2: y }, g); svg("text", { class: "gridlab", x: -0.6, y: y + .35, "text-anchor": "end" }, g).textContent = y; }
+  svg("rect", { x: 0, y: 0, width: W, height: H, fill: "none", class: "grid", "stroke-opacity": .45 }, g);
+  const defs = svg("defs", {}, map);
+  SIDES.forEach((s) => { const m = svg("marker", { id: "arr-" + s, viewBox: "0 0 10 10", refX: 8, refY: 5, markerWidth: 3.2, markerHeight: 3.2, orient: "auto-start-reverse" }, defs); svg("path", { d: "M0 0L10 5L0 10z", class: "head" }, svg("g", { class: "seg " + s }, m)); });
+  svg("g", { id: "layer" }, map);
+  svg("g", { id: "fx" }, map);
+}
+
+function jitter(id) { return [(((id * 37) % 11) / 10 - .5) * .8, (((id * 53) % 13) / 12 - .5) * .8]; }
+
+function drawRound(st) {
+  const L = $("#layer"); L.innerHTML = "";
+  const ri = cur;
+  const gH = svg("g", {}, L), gB = svg("g", {}, L), gR = svg("g", {}, L), gC = svg("g", {}, L), gS = svg("g", {}, L), gU = svg("g", {}, L), gM = svg("g", {}, L);
+  st.harvest.forEach((h) => svg("path", { class: "hv", d: `M${h.x} ${h.y - .7}l.7 .7-.7 .7-.7-.7z`, opacity: h.r === ri ? 1 : .55, "data-tip": `Harvest site ${Math.floor(h.x)},${Math.floor(h.y)} · first sent round ${M.rounds[h.r].round}` }, gH));
+  st.buildings.forEach((b) => {
+    const g = svg("g", { class: `bld ${b.side}${b.r === ri ? " new" : ""}`, "data-tip": `${cap(b.side)} ${b.kind} placed at ${Math.floor(b.x)},${Math.floor(b.y)} · round ${M.rounds[b.r].round} (tick ${b.tick})` }, gB);
+    svg("rect", { x: b.x - .8, y: b.y - .8, width: 1.6, height: 1.6, rx: .15 }, g);
+    svg("text", { x: b.x, y: b.y + .05 }, g).textContent = abbrev(b.kind);
+  });
+  st.rallies.forEach((p) => {
+    const g = svg("g", { class: "rally " + p.side, opacity: p.r === ri ? 1 : .6, "data-tip": `Rally for ${p.side} #${p.id}${M.kinds.get(p.id) ? " " + M.kinds.get(p.id) : ""} → ${Math.floor(p.x)},${Math.floor(p.y)} · set round ${M.rounds[p.r].round}` }, gR);
+    svg("path", { d: `M${p.x - .3} ${p.y + .2}v-1.8l1.3 .45-1.3 .45` }, g);
+  });
+  st.calldowns.forEach((c) => {
+    const age = ri - c.r; if (age > 3) return;
+    const g = svg("g", { class: "cd " + c.side, opacity: age === 0 ? 1 : .55 - age * .1, "data-tip": `${cap(c.side)} calldown: ${c.power} at ${Math.floor(c.x)},${Math.floor(c.y)} · tick ${c.tick}` }, gC);
+    svg("circle", { cx: c.x, cy: c.y, r: 3 }, g);
+    svg("text", { x: c.x, y: c.y - 3.4 }, g).textContent = String(c.power).toUpperCase();
+  });
+  st.segs.forEach((s) => {
+    const g = svg("g", { class: `seg ${s.side}${s.am ? " am" : ""}` }, gS);
+    svg("line", { x1: s.x1, y1: s.y1, x2: s.x2, y2: s.y2, "marker-end": `url(#arr-${s.side})`, opacity: .8 }, g);
+  });
+  [...st.units.values()].filter((u) => u.x !== null).sort((a, b) => a.r - b.r).forEach((u) => {
+    const age = ri - u.r, [jx, jy] = jitter(u.id);
+    const kind = M.kinds.get(u.id);
+    const tip = `#${u.id}${kind ? " " + kind : ""} (${u.side}) · last order round ${M.rounds[u.r].round}: ${u.mode === "attackMove" ? "attack-move" : u.mode}${u.mode === "attack" ? " #" + u.target : " → " + Math.floor(u.x) + "," + Math.floor(u.y)}`;
+    const c = svg("circle", { class: "u " + u.side, cx: u.x + jx, cy: u.y + jy, r: .55, opacity: Math.max(.2, 1 - age * .09).toFixed(2), "data-tip": tip, "data-uid": u.id }, gU);
+    if (u.atk === ri) svg("circle", { class: "atk " + u.side, cx: u.x + jx, cy: u.y + jy, r: 1.05 }, gU);
+    return c;
+  });
+  M.landmarks.forEach((l) => {
+    const g = svg("g", { class: "lm " + l.owner, "data-tip": `${l.label} — inferred from "${l.name}" orders by ${l.side}` }, gM);
+    svg("path", { d: star(l.x, l.y, 1.25, .55) }, g);
+    const right = l.x < M.frame.W - 8;
+    svg("text", { x: right ? l.x + 1.6 : l.x - 1.6, y: l.y + .45, "text-anchor": right ? "start" : "end" }, g).textContent = l.label;
+  });
+}
+function abbrev(kind) { return ({ turret: "T", "sam-site": "S", airpad: "A", "tech-lab": "L", depot: "D", "fab-plant": "F" })[kind] || kind.charAt(0).toUpperCase(); }
+function star(cx, cy, R, r) { let p = ""; for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + i * Math.PI / 5, rr = i % 2 ? r : R; p += (i ? "L" : "M") + (cx + Math.cos(a) * rr).toFixed(2) + " " + (cy + Math.sin(a) * rr).toFixed(2); } return p + "z"; }
+
+function showPing(x, y) {
+  const fx = $("#fx"); fx.innerHTML = "";
+  if (x == null) return;
+  svg("circle", { class: "ping", cx: x, cy: y, r: 1.6 }, fx);
+  svg("circle", { class: "ping-dot", cx: x, cy: y, r: .3 }, fx);
+}
+function showUnit(id) {
+  const fx = $("#fx"); fx.innerHTML = "";
+  if (id == null) return;
+  const c = document.querySelector(`#map circle[data-uid="${id}"]`);
+  if (c) { svg("circle", { class: "uhi", cx: c.getAttribute("cx"), cy: c.getAttribute("cy"), r: 1.2 }, fx); svg("circle", { class: "ping", cx: c.getAttribute("cx"), cy: c.getAttribute("cy"), r: 1.4 }, fx); }
+}
+
+// ------------------------------------------------------------- timeline ---
+function drawStrip() {
+  const s = $("#stripsvg"), n = M.rounds.length;
+  s.setAttribute("viewBox", `0 0 ${n} 100`); s.innerHTML = "";
+  let max = 1; M.rounds.forEach((r) => SIDES.forEach((sd) => (max = Math.max(max, r.cmds[sd] || 0))));
+  svg("rect", { id: "scur", class: "scur", x: 0, y: 0, width: 1, height: 100 }, s);
+  M.rounds.forEach((r, i) => {
+    const hb = (r.cmds.blue || 0) / max * 44, hr = (r.cmds.red || 0) / max * 44;
+    if (hb) svg("rect", { class: "sb blue", x: i + .14, y: 50 - hb, width: .72, height: hb }, s);
+    if (hr) svg("rect", { class: "sb red", x: i + .14, y: 50, width: .72, height: hr }, s);
+    if (r.calldowns) svg("rect", { class: "scd", x: i + .3, y: 1.5, width: .4, height: 4 }, s);
+  });
+  svg("line", { class: "smid", x1: 0, y1: 50, x2: n, y2: 50 }, s);
+  const last = M.rounds[n - 1], endT = M.end ? M.end.tick : last.tick;
+  $("#ruler").innerHTML = `<span>${fmtT(M.rounds[0].tick)}</span><span>commands per round, blue above red · peak ${max} · ▮ calldown</span><span>${fmtT(endT)}</span>`;
+  $("#strip").setAttribute("aria-valuemax", n - 1);
+}
+
+// ------------------------------------------------------------- render ---
+function renderHeader() {
+  const d = M.d, end = M.end;
+  const mapName = String(d.map || "unknown map").replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  const player = (s) => String(((d.seats || {})[s] || {}).player || "?").replace(/^(openai|anthropic|llm):/, "");
+  document.title = `${player("blue")} vs ${player("red")} · ${mapName} · Battle Drones Record Viewer`;
+  $("#eyebrow").innerHTML = `<a href="?">Battle records</a> · v${esc(d.v ?? "?")}${Array.isArray(d.mutators) && d.mutators.length ? " · " + esc(d.mutators.join(", ")) : ""}`;
+  $("#title").innerHTML = `${esc(mapName)}<small>seed ${esc(d.seed ?? "?")}</small>`;
+  $("#matchup").innerHTML = SIDES.map((s) => {
+    const seat = (d.seats || {})[s] || {};
+    return `<span class="fac ${s}"><b>${cap(s)}</b><span class="mono">${esc(seat.player || "?")}</span>${d.openers && d.openers[s] ? `<span class="op">${esc(d.openers[s])}</span>` : ""}</span>`;
+  }).join('<span class="vs">vs</span>');
+  const res = $("#result");
+  res.hidden = false;
+  if (end) {
+    const why = { hq: "HQ destroyed", time: "on time", aborted: "aborted" }[end.reason] || end.reason;
+    res.className = "result " + (end.winner || "none");
+    res.textContent = end.winner ? `${cap(end.winner)} wins · ${why} · ${fmtT(end.tick)}` : `No winner · ${why} · ${fmtT(end.tick)}`;
+  } else { res.className = "result none"; res.textContent = `In progress · tick ${d.tick ?? "?"}`; }
+  const u = d.usage || {};
+  const parts = [];
+  if (d.created) parts.push(`<span>created <b>${esc(new Date(d.created).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }))}</b></span>`);
+  if (d.commit) parts.push(`<span>commit <b class="mono">${esc(String(d.commit).slice(0, 10))}</b></span>`);
+  if (d.sim) parts.push(`<span>sim <b class="mono">${esc(d.sim)}</b></span>`);
+  parts.push(`<span><b class="mono">${(end ? end.tick : num(d.tick)).toLocaleString()}</b> of ${num(d.maxTicks).toLocaleString()} ticks · <b class="mono">${M.per}</b> per round</span>`);
+  parts.push(`<span>map <b class="mono">${M.frame.W}×${M.frame.H}</b></span>`);
+  const played = asPlayed();
+  if (played) parts.push(`<span>as played: <b>${esc(played)}</b> (re-simulated on newer game code)</span>`);
+  SIDES.forEach((s) => { if (u[s]) parts.push(`<span>${cap(s)} tokens <b class="mono">${k(u[s].input)}</b> in (${k(u[s].cached)} cached) · <b class="mono">${k(u[s].output)}</b> out · ${esc(u[s].toolCalls ?? "?")} tool calls</span>`); });
+  $("#meta").innerHTML = parts.join("");
+}
+
+function linkify(text, side) {
+  let h = esc(text);
+  const { W, H } = M.frame;
+  h = h.replace(/(\d{1,3}(?:\.\d+)?)\s*,\s*(\d{1,3}(?:\.\d+)?)(?![\d.])/g, (m, a, b) => {
+    const x = +a, y = +b; if (x >= W || y >= H) return m;
+    const [tx, ty] = toTrue(side, Math.floor(x), Math.floor(y));
+    return `<span data-x="${tx}" data-y="${ty}" data-own="${side}" tabindex="0">${m}</span>`;
+  });
+  h = h.replace(/#(\d+)/g, (m, id) => `<span data-unit="${id}" tabindex="0">${m}</span>`);
+  return h;
+}
+
+function renderDetail() {
+  const r = M.rounds[cur], d = M.d, end = M.end;
+  const next = M.rounds[cur + 1];
+  const tEnd = next ? next.tick - 1 : (end ? end.tick : r.tick + M.per - 1);
+  let h = `<div class="colhead"><span class="label">Round dispatches</span></div>
+  <div class="roundhead"><h2>Round ${r.round}</h2><span class="sub mono">tick ${r.tick}${tEnd > r.tick ? "–" + tEnd : ""} · ${fmtT(r.tick)}</span></div>`;
+  if (cur === M.endRound && end) {
+    const why = { hq: "destroyed the enemy HQ", time: "won on time", aborted: "battle aborted" }[end.reason] || end.reason;
+    const played = asPlayed();
+    h += `<div class="final ${end.winner || "none"}">${end.winner ? cap(end.winner) + " " + esc(why) : "No winner"} at tick ${end.tick} (${fmtT(end.tick)}).${played ? ` As played, ${esc(played.charAt(0).toLowerCase() + played.slice(1))}: this record was re-simulated on newer game code, and its last orders played on.` : ""}</div>`;
+  }
+  SIDES.forEach((s) => {
+    const idxs = r.entries[s] || [];
+    const seat = (d.seats || {})[s] || {};
+    const turnsHere = r.turns.filter((i) => M.turns[i][1] === s).map((i) => M.turns[i]);
+    if (!idxs.length) {
+      h += `<article class="side ${s}" data-side="${s}"><header><b>${cap(s)}</b><span class="who">${esc(seat.player || "")}</span></header><p class="empty">No log entry for this round.</p>${cmdLine(turnsHere, r)}</article>`;
+      return;
+    }
+    idxs.forEach((li) => {
+      const e = M.log[li];
+      const u = e.usage;
+      h += `<article class="side ${s}" data-side="${s}" data-log="${li}">
+        <header><b>${cap(s)}</b><span class="who">${esc(seat.player || "")}</span>
+        <span class="usage mono">${esc(e.ended || "")}${u ? ` · ${k(u.input)} in · ${k(u.output)} out · ${num(u.toolCalls)} calls` : ""}</span></header>
+        ${e.radio ? `<blockquote class="radio">“${esc(e.radio)}”</blockquote>` : ""}
+        ${e.notes ? `<p class="notes">${linkify(e.notes, s)}</p>` : ""}
+        ${(e.results || []).length ? `<ol class="results">${e.results.map((x, j) => resultRow(x, j, e, s)).join("")}</ol>` : `<p class="empty">No orders this round.</p>`}
+        ${cmdLine(turnsHere, r)}
+        ${M.frame.mirrored[s] ? `<p class="framenote">${cap(s)} writes coordinates in its own frame, rotated 180° from the map. Hover one to see where it lands.</p>` : ""}
+      </article>`;
+    });
+  });
+  const radio = r.radio.map((i) => M.radio[i]).filter((x) => !(x[1] && r.entries[x[1]].some((li) => M.log[li].radio === x[2])));
+  if (radio.length) h += `<div><div class="label">Other radio this round</div>${radio.map((x) => `<p class="notes">${x[1] ? `<b style="color:var(--${x[1]})">${cap(x[1])}</b> ` : ""}<span class="mono">t${x[0]}</span> “${esc(x[2])}”</p>`).join("")}</div>`;
+  $("#detail").innerHTML = h;
+}
+function resultRow(x, j, e, s) {
+  const m = String(x).match(/^(\d+)\.\s*(ok|refused)?:?\s*(.*)$/s);
+  const n = m ? m[1] : j + 1, st = m && m[2] ? m[2] : "", txt = m ? m[3] : x;
+  const o = (e.orders || [])[n - 1];
+  const verb = o ? Object.keys(o)[0] : "";
+  return `<li><span class="n">${n}</span>${st ? `<span class="st ${st}">${st}</span>` : `<span></span>`}<span class="txt">${verb ? `<span class="verb">${esc(verb)}</span> ` : ""}${linkify(txt, s)}</span></li>`;
+}
+function cmdLine(turnsHere, r) {
+  if (!turnsHere.length) return `<p class="cmdline">No commands reached the battlefield.</p>`;
+  const bits = turnsHere.map((t) => `${t[2].length} at tick ${t[0]}`);
+  const types = {}; turnsHere.forEach((t) => t[2].forEach((c) => (types[c.type] = (types[c.type] || 0) + 1)));
+  return `<p class="cmdline">Commands executed: ${bits.join(", ")} — ${Object.entries(types).map(([a, b]) => `${esc(a)}${b > 1 ? " ×" + b : ""}`).join(", ")}</p>`;
+}
+
+function renderTotals(st) {
+  const r = M.rounds[cur];
+  $("#totlabel").textContent = `So far · through round ${r.round}`;
+  const chips = (o) => { const e = Object.entries(o).sort((a, b) => b[1] - a[1]); return e.length ? `<div class="chips">${e.map(([a, b]) => `<span class="chip">${esc(a)} <i>×${b}</i></span>`).join("")}</div>` : `<span class="empty">none</span>`; };
+  const row = (label, f) => `<tr><th scope="row">${label}</th>${SIDES.map((s) => `<td>${f(st.stats[s] || blankStats(), s)}</td>`).join("")}</tr>`;
+  $("#totals").innerHTML = `<thead><tr><th></th><th class="blue">Blue</th><th class="red">Red</th></tr></thead><tbody>
+    ${row("Commands", (x) => `<span class="mono">${x.cmds}</span>`)}
+    ${row("Orders refused", (x) => `<span class="mono">${x.refused}</span>`)}
+    ${row("Units queued", (x) => chips(x.units))}
+    ${row("Buildings placed", (x) => chips(x.buildings))}
+    ${row("Calldowns", (x) => chips(x.calldowns))}
+  </tbody>`;
+}
+
+// ------------------------------------------------------------- raw json ---
+function hl(text) {
+  return text.replace(/("(?:\\.|[^"\\])*")(\s*:)?|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)|\b(true|false|null)\b|([{}\[\],])/g, (m, str, colon, num, lit, p) => {
+    if (str) return colon ? `<span class="k">${esc(str)}</span><span class="p">${colon}</span>` : `<span class="s">${esc(str)}</span>`;
+    if (num) return `<span class="nm">${num}</span>`;
+    if (lit) return `<span class="l">${lit}</span>`;
+    return `<span class="p">${p}</span>`;
+  });
+}
+function pretty(v, ind) {
+  ind = ind || "";
+  const c = JSON.stringify(v);
+  if (v === null || typeof v !== "object" || c.length + ind.length <= 76) return c;
+  const ni = ind + "  ";
+  if (Array.isArray(v)) return "[\n" + v.map((x) => ni + pretty(x, ni)).join(",\n") + "\n" + ind + "]";
+  return "{\n" + Object.keys(v).map((key) => ni + JSON.stringify(key) + ": " + pretty(v[key], ni)).join(",\n") + "\n" + ind + "}";
+}
+let fileLines = [];
+function buildFileView() {
+  const d = M.d, keys = Object.keys(d), lines = [];
+  lines.push({ t: "{" });
+  keys.forEach((key, i) => {
+    const v = d[key], comma = i < keys.length - 1 ? "," : "";
+    if (Array.isArray(v) && v.length && typeof v[0] === "object") {
+      lines.push({ t: `  ${JSON.stringify(key)}: [` });
+      v.forEach((el, j) => {
+        let ri = null, side = null;
+        if (key === "turns" || key === "radio") { const x = (key === "turns" ? M.turns : M.radio)[j]; ri = key === "turns" ? M.turnRound[j] : roundIdxOfTick(x[0]); side = x[1]; }
+        else if (key === "hashes") ri = roundIdxOfTick(Math.max(0, num(el?.[0]) - 1));
+        else if (key === "log") { side = el && sideOf(el.side); ri = side ? M.rounds.findIndex((r) => r.round === num(el.round)) : null; }
+        const p = pretty(el, "    ").split("\n");
+        p.forEach((ln, n) => lines.push({ t: (n === 0 ? "    " : "") + ln + (n === p.length - 1 && j < v.length - 1 ? "," : ""), ri, side, path: `${key}[${j}]` }));
+      });
+      lines.push({ t: "  ]" + comma });
+    } else {
+      const p = pretty(v, "  ").split("\n");
+      p.forEach((ln, j) => lines.push({ t: (j === 0 ? `  ${JSON.stringify(key)}: ` : "") + ln + (j === p.length - 1 ? comma : ""), ri: key === "end" && M.endRound >= 0 ? M.endRound : null }));
+    }
+  });
+  lines.push({ t: "}" });
+  fileLines = lines;
+}
+function roundIdxOfTick(t) { let lo = 0; M.rounds.forEach((r, i) => { if (r.tick <= t) lo = i; }); return lo; }
+
+function renderJson(scroll) {
+  const box = $("#jsonbox"), r = M.rounds[cur], d = M.d;
+  $("#jmRound").setAttribute("aria-pressed", jsonMode === "round");
+  $("#jmFile").setAttribute("aria-pressed", jsonMode === "file");
+  if (jsonMode === "round") {
+    const blocks = [];
+    SIDES.forEach((s) => (r.entries[s] || []).forEach((i) => blocks.push({ path: `log[${i}]`, tag: `${s} · round ${M.log[i].round}`, side: s, v: M.log[i] })));
+    r.turns.forEach((i) => blocks.push({ path: `turns[${i}]`, tag: `${M.turns[i][1]} · tick ${M.turns[i][0]}`, side: M.turns[i][1], v: M.turns[i] }));
+    r.radio.forEach((i) => blocks.push({ path: `radio[${i}]`, tag: M.radio[i][1] || "radio", side: M.radio[i][1], v: d.radio[i] }));
+    r.hashes.forEach((i) => blocks.push({ path: `hashes[${i}]`, tag: "world hash", v: d.hashes[i] }));
+    if (cur === M.endRound && M.end) blocks.push({ path: "end", tag: "result", v: d.end });
+    $("#jnote").textContent = `${blocks.length} entries from the file that belong to round ${r.round}, exactly as recorded. Switch to the whole file to see them in place.`;
+    box.innerHTML = blocks.map((b) => `<div class="jblock ${b.side || ""}" ${b.side ? `data-side="${b.side}"` : ""}><div class="path"><b>${esc(b.path)}</b><span class="tag">${esc(b.tag)}</span></div><pre>${hl(pretty(b.v))}</pre></div>`).join("") || `<p class="jnote" style="padding:12px">Nothing in the file for this round.</p>`;
+    box.scrollTop = 0;
+  } else {
+    if (!box.dataset.file) {
+      box.innerHTML = fileLines.map((l, i) => `<div class="jl${l.ri != null ? " click" : ""}" data-i="${i}"${l.path ? ` title="${esc(l.path)}"` : ""}>${hl(l.t)}</div>`).join("");
+      box.dataset.file = "1";
+    }
+    const els = box.children;
+    let first = null, firstLog = null;
+    fileLines.forEach((l, i) => { const hit = l.ri === cur; els[i].classList.toggle("hit", hit); if (hit && first === null) first = i; if (hit && firstLog === null && l.path && l.path.startsWith("log")) firstLog = i; });
+    $("#jnote").textContent = `The whole file, pretty-printed. Highlighted lines belong to round ${r.round}; click any line to jump to its round.`;
+    const target = firstLog ?? first;
+    if (scroll && target !== null) box.scrollTop = els[target].offsetTop - 24;
+  }
+}
+
+// ------------------------------------------------------------- drive ---
+function go(i, opts) {
+  if (!M) return;
+  cur = Math.max(0, Math.min(M.rounds.length - 1, i));
+  const st = stateAt(cur);
+  drawRound(st);
+  pinned = null;
+  if (!opts || !opts.keepJson) renderJson(true);
+  renderDetail();
+  renderTotals(st);
+  const r = M.rounds[cur];
+  const cr = $("#scur"); if (cr) cr.setAttribute("x", cur);
+  $("#strip").setAttribute("aria-valuenow", cur);
+  $("#strip").setAttribute("aria-valuetext", `Round ${r.round}, tick ${r.tick}`);
+  $("#where").innerHTML = `<b>Round ${r.round}</b> <span class="mono">/ ${M.rounds[M.rounds.length - 1].round}</span><br><span class="mono">tick ${r.tick} · ${fmtT(r.tick)}</span>`;
+  try { history.replaceState(null, "", "#r" + r.round); } catch (e) {}
+}
+function setPlaying(on) {
+  clearInterval(timer); timer = null;
+  $("#playicon").innerHTML = on ? '<path d="M2 1h3.5v12H2zM8.5 1H12v12H8.5z"/>' : '<path d="M3 1v12l10-6z"/>';
+  $("#play").setAttribute("aria-label", on ? "Pause" : "Play");
+  if (!on) return;
+  if (cur >= M.rounds.length - 1) go(0);
+  timer = setInterval(() => { if (cur >= M.rounds.length - 1) return setPlaying(false); go(cur + 1); }, +$("#speed").value);
+}
+
+// quiet: the record the page opened with (a ?replay= link), which starts on the round in its #r<n>, or the first one with orders
+function load(text, quiet) {
+  let d;
+  try { d = JSON.parse(text); } catch (e) { return fail(/^\s*</.test(text) ? "That's a web page, not a battle record (a .json file)" : "That isn't valid JSON: " + e.message); }
+  if (!d || typeof d !== "object" || (!Array.isArray(d.turns) && !Array.isArray(d.log))) return fail("That JSON doesn't look like a battle record. It needs a \"turns\" or \"log\" array.");
+  setPlaying(false);
+  const was = [RAW, D, M];
+  try {
+    RAW = text; D = d; M = build(d);
+    $("#jsonbox").dataset.file = "";
+    buildFileView();
+    renderHeader(); drawBase(); drawStrip();
+    let start = M.rounds.length - 1;
+    const m = /^#r(\d+)$/.exec(location.hash || "");
+    if (quiet && m) { const j = M.rounds.findIndex((r) => r.round === +m[1]); if (j >= 0) start = j; }
+    else if (quiet) start = Math.min(M.rounds.length - 1, M.rounds.findIndex((r) => r.turns.length) >= 0 ? M.rounds.findIndex((r) => r.turns.length) : 0);
+    $("#welcome").hidden = true; $(".app").hidden = false;
+    go(start);
+  } catch (e) {
+    [RAW, D, M] = was;
+    if (M) { $("#jsonbox").dataset.file = ""; buildFileView(); renderHeader(); drawBase(); drawStrip(); go(cur); }
+    return fail("Couldn't show that record: " + e.message);
+  }
+  $("#msg").hidden = true;
+  return true;
+}
+function say(msg, error) { const e = $("#msg"); e.textContent = msg; e.className = "msg" + (error ? " error" : ""); e.hidden = false; }
+function fail(msg) { say(msg, true); if (!M) { $("#welcome").hidden = false; $(".app").hidden = true; } return false; }
+// a record opened here, not by a link: the address no longer says where it came from
+function unlink() { $("#url").value = ""; if (location.search) history.replaceState(null, "", location.pathname + location.hash); }
+
+// ------------------------------------------------------------- events ---
+$("#first").onclick = () => go(0);
+$("#prev").onclick = () => go(cur - 1);
+$("#next").onclick = () => go(cur + 1);
+$("#last").onclick = () => go(M.rounds.length - 1);
+$("#play").onclick = () => setPlaying(!timer);
+$("#speed").onchange = () => { if (timer) setPlaying(true); };
+$("#jmRound").onclick = () => { jsonMode = "round"; renderJson(true); };
+$("#jmFile").onclick = () => { jsonMode = "file"; renderJson(true); };
+$("#copy").onclick = async () => {
+  const text = jsonMode === "file" ? RAW : [...$("#jsonbox").querySelectorAll(".jblock")].map((b) => "// " + b.querySelector(".path b").textContent + "\n" + b.querySelector("pre").textContent).join("\n\n");
+  const btn = $("#copy");
+  try { await navigator.clipboard.writeText(text); btn.textContent = "Copied"; }
+  catch (e) { const sel = getSelection(), rg = document.createRange(); rg.selectNodeContents($("#jsonbox")); sel.removeAllRanges(); sel.addRange(rg); btn.textContent = "Selected"; }
+  setTimeout(() => (btn.textContent = "Copy"), 1400);
+};
+$("#jsonbox").addEventListener("click", (e) => {
+  const l = e.target.closest(".jl"); if (!l || getSelection().toString()) return;
+  const f = fileLines[+l.dataset.i]; if (f && f.ri != null && f.ri !== cur) go(f.ri, { keepJson: true }), renderJson(false);
+});
+const strip = $("#strip");
+const stripAt = (e) => { const b = strip.getBoundingClientRect(); return Math.floor((e.clientX - b.left) / b.width * M.rounds.length); };
+strip.addEventListener("pointerdown", (e) => { strip.setPointerCapture(e.pointerId); setPlaying(false); go(stripAt(e)); });
+strip.addEventListener("pointermove", (e) => { if (strip.hasPointerCapture(e.pointerId)) { const i = stripAt(e); if (i !== cur) go(i); } });
+// a #r<n> link followed (or typed) on this page: that round
+addEventListener("hashchange", () => { const m = /^#r(\d+)$/.exec(location.hash), j = m && M ? M.rounds.findIndex((r) => r.round === +m[1]) : -1; if (j >= 0 && j !== cur) go(j); });
+document.addEventListener("keydown", (e) => {
+  if (!M || e.target.matches("input, select, textarea")) return;
+  if (e.key === "ArrowRight") { go(cur + 1); e.preventDefault(); }
+  else if (e.key === "ArrowLeft") { go(cur - 1); e.preventDefault(); }
+  else if (e.key === "Home") { go(0); e.preventDefault(); }
+  else if (e.key === "End") { go(M.rounds.length - 1); e.preventDefault(); }
+  else if (e.key === " " && !e.target.matches("button")) { setPlaying(!timer); e.preventDefault(); }
+});
+
+// hover links between text, map and JSON
+const tip = $("#tip");
+document.addEventListener("pointerover", (e) => {
+  const t = e.target;
+  const c = t.closest && t.closest("[data-x]");
+  if (c) { showPing(+c.dataset.x, +c.dataset.y); setTip(`${c.textContent} in ${c.dataset.own}'s frame → map ${Math.floor(+c.dataset.x)},${Math.floor(+c.dataset.y)}`, e); return; }
+  const u = t.closest && t.closest("[data-unit]");
+  if (u) { const id = +u.dataset.unit; showUnit(id); const st = document.querySelector(`#map circle[data-uid="${id}"]`); setTip(st ? st.dataset.tip : `#${id}${M.kinds.get(id) ? " " + M.kinds.get(id) : ""} · no position ordered yet`, e); return; }
+  const g = t.closest && t.closest("[data-tip]");
+  if (g) { setTip(g.dataset.tip, e); return; }
+  const card = t.closest && t.closest(".side[data-side]");
+  document.querySelectorAll("#jsonbox .lit").forEach((x) => x.classList.remove("lit"));
+  if (card) {
+    const s = card.dataset.side;
+    if (jsonMode === "round") document.querySelectorAll(`#jsonbox .jblock[data-side="${s}"]`).forEach((x) => x.classList.add("lit"));
+    else fileLines.forEach((l, i) => { if (l.ri === cur && l.side === s) $("#jsonbox").children[i].classList.add("lit"); });
+  }
+  tip.hidden = true;
+});
+document.addEventListener("pointerout", (e) => {
+  const t = e.target;
+  if (t.closest && (t.closest("[data-x]") || t.closest("[data-unit]"))) { if (pinned == null) showPing(null); }
+  if (t.closest && t.closest("[data-tip],[data-x],[data-unit]")) tip.hidden = true;
+});
+document.addEventListener("pointermove", (e) => { if (!tip.hidden) placeTip(e); });
+document.addEventListener("focusin", (e) => { const c = e.target.closest && e.target.closest("[data-x]"); if (c) showPing(+c.dataset.x, +c.dataset.y); const u = e.target.closest && e.target.closest("[data-unit]"); if (u) showUnit(+u.dataset.unit); });
+function setTip(text, e) { tip.textContent = text; tip.hidden = false; placeTip(e); }
+function placeTip(e) { const w = tip.offsetWidth, h = tip.offsetHeight; let x = e.clientX + 14, y = e.clientY + 14; if (x + w > innerWidth - 8) x = e.clientX - w - 10; if (y + h > innerHeight - 8) y = e.clientY - h - 10; tip.style.left = Math.max(8, x) + "px"; tip.style.top = Math.max(8, y) + "px"; }
+
+// opening other records
+$("#file").addEventListener("change", (e) => { const f = e.target.files[0]; if (f) f.text().then((t) => load(t) && unlink()); e.target.value = ""; });
+let dragDepth = 0;
+addEventListener("dragenter", (e) => { if ([...(e.dataTransfer?.types || [])].includes("Files")) { dragDepth++; $("#drop").hidden = false; e.preventDefault(); } });
+addEventListener("dragover", (e) => e.preventDefault());
+addEventListener("dragleave", () => { if (--dragDepth <= 0) { dragDepth = 0; $("#drop").hidden = true; } });
+addEventListener("drop", (e) => { e.preventDefault(); dragDepth = 0; $("#drop").hidden = true; const f = e.dataTransfer?.files?.[0]; if (f) f.text().then((t) => load(t) && unlink()); });
+addEventListener("paste", (e) => {
+  if (e.target.matches && e.target.matches("input, textarea")) return;
+  const t = (e.clipboardData?.getData("text") || "").trim();
+  if (t.startsWith("{")) { if (load(t)) unlink(); }
+  else if (/^https?:\/\/\S+$/.test(t)) openLink(t);
+});
+
+// ------------------------------------------------------------- links ---
+// ?replay=<record>: relative to this page or absolute, from any server that sends CORS headers, a file's page on GitHub,
+// or a Gist (the game's ?replay= links are read the same way: src/game/replay.ts fetchLinkedRecord).
+const GIST = /^https?:\/\/gist\.github\.com\/(?:([^/]+)\/)?([0-9a-f]+)(?:\/([0-9a-f]+))?$/i;
+const GITHUB_FILE = /^https?:\/\/github\.com\/([^/]+)\/([^/]+)\/blob\/(.+)$/i;
+async function fetchText(url) {
+  let res;
+  try { res = await fetch(url); }
+  // (to a page, a server that doesn't allow cross-origin reads looks just like no network)
+  catch (e) { throw new Error(`Couldn't fetch ${url}: no network, or its server doesn't allow other sites to read it (CORS)`); }
+  if (!res.ok) throw new Error(`Couldn't fetch ${url}: ${res.status} ${res.statusText}`.trim());
+  return res.text();
+}
+async function fetchLinked(ref) {
+  let url;
+  try { url = new URL(ref, location.href); } catch (e) { throw new Error(`"${ref}" isn't a URL`); }
+  if (url.protocol !== "https:" && url.protocol !== "http:") throw new Error("Only http and https links can be loaded");
+  const page = (url.origin + url.pathname).replace(/\/$/, "");
+  const gist = GIST.exec(page);
+  if (gist) {
+    const [, owner, id, revision] = gist;
+    // with the owner in the link, the raw file needs no API call (GitHub allows 60 an hour per address); it's the Gist's first file
+    if (owner) return fetchText(`https://gist.githubusercontent.com/${owner}/${id}/raw/${revision || ""}`);
+    const res = await fetch(`https://api.github.com/gists/${id}${revision ? "/" + revision : ""}`).catch(() => null);
+    if (!res || !res.ok) throw new Error(`Couldn't look up Gist ${id} with GitHub's API${res ? ` (${res.status})` : ""}`);
+    const files = Object.values((await res.json()).files || {});
+    const file = files.find((f) => /\.json$/i.test(f.filename)) || files[0];
+    if (!file) throw new Error(`Gist ${id} has no files`);
+    return fetchText(file.raw_url);
+  }
+  const blob = GITHUB_FILE.exec(page);
+  return fetchText(blob ? `https://raw.githubusercontent.com/${blob[1]}/${blob[2]}/${blob[3]}` : url.href);
+}
+// a new link reloads the page on it, so the address bar always says what's open (and Back goes to the last one)
+function openLink(ref) { location.assign("?replay=" + encodeURIComponent(ref.trim()).replace(/%2F/gi, "/").replace(/%3A/gi, ":")); }
+$("#urlform").addEventListener("submit", (e) => { e.preventDefault(); const v = $("#url").value.trim(); if (v) openLink(v); });
+
+const linked = (new URLSearchParams(location.search).get("replay") || "").trim();
+if (linked) {
+  $("#url").value = linked;
+  say(`Loading ${linked}…`);
+  fetchLinked(linked).then((t) => load(t, true), (e) => fail(e.message));
+} else $("#welcome").hidden = false;
+
+})();
+</script>
+</body>
+</html>

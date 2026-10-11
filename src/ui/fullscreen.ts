@@ -29,7 +29,16 @@ function browserEnv(): FullscreenEnv {
   } catch {
     /* blocked: no restore after a reload */
   }
-  return { doc: document, win: window, storage, reload: () => window.location.reload() };
+  return { doc: document, win: window, storage, reload: () => reloadWithoutLink(window.location) };
+}
+
+/** Reload, leaving a replay's `?replay=` link behind (main.ts watchLinked): its Menu buttons mean the menu. */
+export function reloadWithoutLink(loc: Pick<Location, "href" | "reload" | "assign">): void {
+  const url = new URL(loc.href);
+  if (!url.searchParams.has("replay")) return loc.reload();
+  url.searchParams.delete("replay");
+  url.searchParams.delete("follow");
+  loc.assign(url.href);
 }
 
 /** Gestures that let a page request full screen (a touch counts on release). */
