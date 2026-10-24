@@ -158,6 +158,7 @@ function applyDamage(
   id: number,
   damage: number,
   attackerId: number,
+  side: Faction | null,
   incidents: Incident[]
 ): void {
   const u = w.units.get(id);
@@ -165,6 +166,7 @@ function applyDamage(
     u.hp -= damage;
     u.damagedTick = w.tick;
     u.lastAttackerId = attackerId;
+    u.lastAttackerSide = side;
     incidents.push({ victimId: id, attackerId });
     w.fx.push({ type: "hit", faction: u.faction, id, x: u.x, y: u.y, building: false, attackerId });
     return;
@@ -174,6 +176,7 @@ function applyDamage(
     b.hp -= damage;
     b.damagedTick = w.tick;
     b.lastAttackerId = attackerId;
+    b.lastAttackerSide = side;
     incidents.push({ victimId: id, attackerId });
     const c = buildingCenter(b);
     w.fx.push({ type: "hit", faction: b.faction, id, x: c.x, y: c.y, building: true, attackerId });
@@ -197,14 +200,14 @@ function splash(
     if (u.faction === faction || !canHit(targets, unitDomain(u))) continue;
     const d = hypot(u.x - x, u.y - y);
     if (d > radius) continue;
-    applyDamage(w, u.id, damage * (1 - 0.5 * (d / radius)) * damageMult(w, u.id, dmgType), attackerId, incidents);
+    applyDamage(w, u.id, damage * (1 - 0.5 * (d / radius)) * damageMult(w, u.id, dmgType), attackerId, faction, incidents);
   }
   if (canHit(targets, "ground"))
     for (const b of w.buildings.values()) {
       if (b.faction === faction) continue;
       const d = distToBuilding(b, x, y);
       if (d > radius) continue;
-      applyDamage(w, b.id, damage * (1 - 0.5 * (d / radius)) * damageMult(w, b.id, dmgType), attackerId, incidents);
+      applyDamage(w, b.id, damage * (1 - 0.5 * (d / radius)) * damageMult(w, b.id, dmgType), attackerId, faction, incidents);
     }
 }
 
@@ -230,10 +233,10 @@ export function areaBlast(
   return incidents.length;
 }
 
-/** Raw damage to listed entities (the Sky Hammer), with the usual hit events and kill credit. */
-export function strikeDamage(w: World, hits: { id: number; damage: number }[], attackerId: number): void {
+/** Raw damage to listed entities (the Sky Hammer), with the usual hit events and kill credit (to `side`'s account). */
+export function strikeDamage(w: World, hits: { id: number; damage: number }[], attackerId: number, side: Faction | null): void {
   const incidents: Incident[] = [];
-  for (const h of hits) applyDamage(w, h.id, h.damage, attackerId, incidents);
+  for (const h of hits) applyDamage(w, h.id, h.damage, attackerId, side, incidents);
   retaliate(w, incidents);
 }
 
@@ -296,7 +299,7 @@ function fire(w: World, attacker: Attacker, targetId: number, incidents: Inciden
     splash(w, holder.faction, t.x, t.y, stats.splash, damage, dmgType, stats.targets, holder.id, incidents);
     return;
   }
-  applyDamage(w, targetId, damage * vsAir * damageMult(w, targetId, dmgType), holder.id, incidents);
+  applyDamage(w, targetId, damage * vsAir * damageMult(w, targetId, dmgType), holder.id, holder.faction, incidents);
 }
 
 /** Advance in-flight projectiles; detonate on arrival. */
@@ -316,14 +319,14 @@ function tickProjectiles(w: World, incidents: Incident[]): void {
   w.projectiles = keep;
 }
 
-/** Menders: repair the most damaged friendly nearby. */
+/** Menders: repair the most damaged friendly nearby (never one destroyed already this tick: hp 0 or less is gone, even before cleanupDeaths takes it). */
 function tickHealer(w: World, u: Unit, engaged: Set<number>): void {
   const stats = UNITS[u.kind];
   const reach = stats.range + COMBAT.acquireBonus + (u.order.type === "idle" ? 2.5 : 0);
   let best: { id: number; x: number; y: number; d: number; unit: boolean } | null = null;
   let bestScore = Infinity;
   for (const o of w.units.values()) {
-    if (o.faction !== u.faction || o.id === u.id || o.hp >= UNITS[o.kind].hp) continue;
+    if (o.faction !== u.faction || o.id === u.id || o.hp <= 0 || o.hp >= UNITS[o.kind].hp) continue;
     if (o.goliath && isStunned(w, o.id)) continue; // an EMP blocks repair on a Goliath while it lasts
     const d = hypot(o.x - u.x, o.y - u.y);
     if (d > reach) continue;
@@ -335,7 +338,7 @@ function tickHealer(w: World, u: Unit, engaged: Set<number>): void {
     }
   }
   for (const b of w.buildings.values()) {
-    if (b.faction !== u.faction || b.hp >= BUILDINGS[b.kind].hp) continue;
+    if (b.faction !== u.faction || b.hp <= 0 || b.hp >= BUILDINGS[b.kind].hp) continue;
     const d = distToBuilding(b, u.x, u.y);
     if (d > reach) continue;
     const s = d + 2 + (b.hp / BUILDINGS[b.kind].hp) * 3;
@@ -590,13 +593,14 @@ function rankFor(u: Unit): number {
 /**
  * Credit a kill. In a duel the faction stat always goes to the victim's enemy
  * (every source of damage is hostile), even when the killer has since died or
- * is a building; in a free-for-all to the killer's side, when it is still on
- * the map to say whose it was. XP and the kill count go to the killing unit
+ * is a building; in a free-for-all to the killer's side: the side kept with
+ * the killing hit (`side`), so a calldown, or a shell whose gun has since
+ * died, is still somebody's kill. XP and the kill count go to the killing unit
  * if it was alive this tick (one that dies on the tick of its killing blow
  * keeps the kill).
  */
-function creditKill(w: World, victimFaction: Faction, killerId: number | null, victimCost: number, building: boolean): void {
-  const by = isMulti(w) ? sideOfId(w, killerId) : otherSide(victimFaction);
+function creditKill(w: World, victimFaction: Faction, killerId: number | null, victimCost: number, building: boolean, side?: Faction | null): void {
+  const by = isMulti(w) ? sideOfId(w, killerId) ?? side ?? null : otherSide(victimFaction);
   if (by && by !== victimFaction) {
     const stats = w.factions[by].stats;
     if (building) stats.buildingsKilled++;
@@ -620,10 +624,10 @@ function sideOfId(w: World, id: number | null): Faction | null {
   return (w.units.get(id) ?? w.buildings.get(id))?.faction ?? null;
 }
 
-/** Killer id/kind if the last attacker is still alive this tick (a free-for-all: and whose it is, `by`). */
-function killerOf(w: World, id: number | null): { killerId: number | null; killerKind: Unit["kind"] | null; by?: Faction | null } {
+/** Killer id/kind if the last attacker is still alive this tick (a free-for-all: and whose it is, `by`, else the side kept with the hit). */
+function killerOf(w: World, id: number | null, side?: Faction | null): { killerId: number | null; killerKind: Unit["kind"] | null; by?: Faction | null } {
   const k = killerOfId(w, id);
-  return isMulti(w) ? { ...k, by: sideOfId(w, id) } : k;
+  return isMulti(w) ? { ...k, by: sideOfId(w, id) ?? side ?? null } : k;
 }
 
 function killerOfId(w: World, id: number | null): { killerId: number | null; killerKind: Unit["kind"] | null } {
@@ -656,21 +660,21 @@ export function cleanupDeaths(w: World): void {
   const bail: Unit[] = [];
   for (const u of w.units.values()) {
     if (u.hp > 0) continue;
-    const killer = killerOf(w, u.lastAttackerId);
+    const killer = killerOf(w, u.lastAttackerId, u.lastAttackerSide);
     deadUnits.push({ u, killer });
-    creditKill(w, u.faction, u.lastAttackerId, UNITS[u.kind].cost, false);
+    creditKill(w, u.faction, u.lastAttackerId, UNITS[u.kind].cost, false, u.lastAttackerSide);
     if (!u.passengers?.length) continue;
     if (canBailOut(w, u)) bail.push(u);
     else
       for (const p of u.passengers) {
         lost.push({ u: p, carrier: u, killer });
-        creditKill(w, p.faction, u.lastAttackerId, UNITS[p.kind].cost, false);
+        creditKill(w, p.faction, u.lastAttackerId, UNITS[p.kind].cost, false, u.lastAttackerSide);
       }
   }
   for (const b of w.buildings.values()) {
     if (b.hp > 0) continue;
-    deadBuildings.push({ b, killer: killerOf(w, b.lastAttackerId) });
-    creditKill(w, b.faction, b.lastAttackerId, BUILDINGS[b.kind].cost || 500, true);
+    deadBuildings.push({ b, killer: killerOf(w, b.lastAttackerId, b.lastAttackerSide) });
+    creditKill(w, b.faction, b.lastAttackerId, BUILDINGS[b.kind].cost || 500, true, b.lastAttackerSide);
   }
   for (const { u, killer } of deadUnits) {
     const id = u.id;
@@ -756,12 +760,14 @@ function selfDestruct(w: World, f: Faction): boolean {
     if (u.faction === f) {
       u.hp = 0;
       u.lastAttackerId = null;
+      u.lastAttackerSide = null;
       any = true;
     }
   for (const b of w.buildings.values())
     if (b.faction === f) {
       b.hp = 0;
       b.lastAttackerId = null;
+      b.lastAttackerSide = null;
       any = true;
     }
   return any;

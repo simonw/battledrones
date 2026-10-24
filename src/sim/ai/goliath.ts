@@ -38,6 +38,7 @@ import {
 import { airliftBusy } from "./airlift";
 import type { AiMode, AiState, Difficulty, StrategyName } from "./commander";
 import { dropCondorId, inMap, route } from "./condor";
+import { FFA_TACTICS, ffaTactic } from "./ffa";
 import { AA_COVER, USELESS, aaSources, aaStrengthAt, aaWeight, effectivenessVs, type Sighting } from "./intel";
 import { cos, sin } from "../fmath";
 
@@ -70,6 +71,9 @@ import { cos, sin } from "../fmath";
  * - SIEGE: Rush and Ironclad Goliaths fall in with a wave going by their
  *   post and walk a few tiles behind its lead — never alone into the
  *   enemy's base.
+ * - THE PUSH (a free-for-all, ai/ffa.ts): from 12:00 the Goliaths walking
+ *   with the waves march on the focus rival's base, the army gathered on
+ *   the lead one, once together they outgun what holds it (planPush).
  * - HUNTS: enemy Goliaths are always in sight; idle units that can hurt one
  *   strike it when they outweigh what it can still fire (its Menders first,
  *   and sooner while a weapon is down), and anti-air goes for a Condor
@@ -220,6 +224,25 @@ export const GOLIATH_AI = {
   company: 450,
   /** …once within this many tiles of the enemy HQ. */
   deep: 18,
+
+  /**
+   * A free-for-all's push (planPush), from `lateSiege`: our Goliaths walking with the waves
+   * and the army march on the focus's base once they outgun what holds it (its firepower
+   * in sight and its known armed buildings within `danger` tiles) this many times over…
+   * (Four Normal AIs under the Armada, 11 seeds of two lineups: with it from 12:00 every game
+   * was decided by 35:00, in 18–21 min on average, against 3 without it; from 0:00 it decided
+   * them in the 3:00–9:00 brawl instead, mostly for Ironclad and Rush, whose spare Goliath
+   * walks from the start.)
+   */
+  pushEdge: 1.5,
+  /** …less this much each minute after `lateSiege` (a stalemate wears the edge thin)… */
+  pushDecay: 0.025,
+  /** …down to this… */
+  pushFloor: 1.05,
+  /** …and once on its way, it marches on while they outgun it this many times over (or by the edge, once that is lower: from 28:00). */
+  pushHold: 1.1,
+  /** The waves go, at the push's target, once the lead Goliath is this close to it (tiles). */
+  pushNear: 12,
 
   /** A walk this many times the straight line (and `liftGain` tiles longer) is a lift if two Condors are free. */
   liftDetour: 1.8,
@@ -679,6 +702,8 @@ export interface GoliathContext {
   guardPoint: P;
   /** We still have an HQ. */
   hasHq: boolean;
+  /** A free-for-all's push under way (planPush): where our Goliaths walking with the waves march. */
+  push?: P | null;
 }
 
 /** Known enemy defences covering (x, y) (range + GOLIATH_AI.defenceGap). */
@@ -1449,7 +1474,11 @@ function step(w: World, faction: Faction, s: AiState, g: Unit, plan: Plan, ctx: 
         setPhase(w, plan, "muster");
         return;
       }
-      const company = value(ctx.army.filter((u) => u.kind !== "mender" && dist(u.x, u.y, g.x, g.y) <= 8));
+      let company = value(ctx.army.filter((u) => u.kind !== "mender" && dist(u.x, u.y, g.x, g.y) <= 8));
+      // (a free-for-all: our other walking Goliaths beside it are company too — three marching
+      // together don't turn back for want of an escort)
+      if (ffaTactic(w, "company"))
+        for (const o of goliathsOf(w, faction)) if (o.id !== g.id && canWalk(o) && dist(o.x, o.y, g.x, g.y) <= 8) company += threatValue(o);
       const deep = dist(g.x, g.y, ctx.enemyHqPos.x, ctx.enemyHqPos.y) < GOLIATH_AI.deep;
       if (deep && company < GOLIATH_AI.company) {
         // alone in their base: back to the nearest group of ours (or the staging point)
@@ -1469,6 +1498,8 @@ function step(w: World, faction: Faction, s: AiState, g: Unit, plan: Plan, ctx: 
         const back = Math.max(0.5, dist(lead.x, lead.y, ctx.hqC.x, ctx.hqC.y));
         goal = { x: lead.x + ((ctx.hqC.x - lead.x) / back) * GOLIATH_AI.behind, y: lead.y + ((ctx.hqC.y - lead.y) / back) * GOLIATH_AI.behind };
       }
+      // (a free-for-all's push: it marches on the target, the army gathering on the lead Goliath)
+      if (ctx.push) goal = { x: ctx.push.x, y: ctx.push.y };
       if (dist(g.x, g.y, goal.x, goal.y) <= 2 || !walkable(w, g, goal)) return;
       const o = g.order;
       if (o.type === "attackMove" && dist(o.x, o.y, goal.x, goal.y) < 2) return;
@@ -1588,6 +1619,23 @@ function keepEscorts(w: World, faction: Faction, s: AiState, g: Unit, plan: Plan
   if (ctx.threatened && ctx.hasHq) {
     plan.escorts = [];
     return;
+  }
+  // (a free-for-all from 12:00: an escort beyond what's wanted now — taken on for a march, the
+  // Goliath home again or dug in at a field — stands down, the nearest kept; else it stood guard
+  // all game, never staged, launched or sent on a hunt. Not one walking with the waves: parked at
+  // the staging point it counts as home, yet its escort is the company it marches with on a push,
+  // and stripped there the army went into the rivals' guns in small waves instead)
+  if (ffaTactic(w, "escortTrim") && pastLateSiege(w) && plan.phase !== "siege" && value(escorts) > want) {
+    const keep = new Set<number>();
+    let v = 0;
+    for (const u of [...escorts].sort((a, b) => dist(a.x, a.y, g.x, g.y) - dist(b.x, b.y, g.x, g.y) || a.id - b.id)) {
+      if (v >= want) break;
+      keep.add(u.id);
+      v += UNITS[u.kind].cost;
+    }
+    // (in their old order: the rest keep their posts)
+    escorts.splice(0, escorts.length, ...escorts.filter((u) => keep.has(u.id)));
+    plan.escorts = escorts.map((u) => u.id);
   }
   let have = value(escorts);
   const hasAa = escorts.some((u) => aaWeight(UNITS[u.kind]) >= AA_COVER);
@@ -1819,6 +1867,124 @@ function liftStep(w: World, faction: Faction, s: AiState, g: Unit, plan: Plan, c
     plan.waypoint = null;
   }
   cmds.push({ type: "unload", faction, unitIds: [g.id], x: goal!.x, y: goal!.y });
+}
+
+// --- the push (a free-for-all) ---------------------------------------------
+
+/** What a free-for-all's push marches on: the focus rival's base Goliath, or its HQ. */
+export interface PushTarget extends P {
+  id: number;
+  /** Its HQ (a classic free-for-all), not a Goliath. */
+  building: boolean;
+}
+
+export interface PushContext {
+  /** The rival we're out to beat (none in a duel: no push). */
+  focus: Faction | null;
+  seen: Unit[];
+  armyValue: number;
+  mode: AiMode;
+  /** The focus's HQ, where we know it stands. */
+  enemyHq: KnownBuilding | null;
+  /** The focus's home corner (where its HQ stands, or would). */
+  enemyHome: P;
+}
+
+/**
+ * A free-for-all's push (ai/ffa.ts). From GOLIATH_AI.lateSiege, in an
+ * assault, our Goliaths walking with the waves (phase siege, at
+ * GOLIATH_AI.siegeRetreat health or better) and the whole army march on the
+ * focus's base once together they outgun what holds it (defenceAt)
+ * GOLIATH_AI.pushEdge times over, an edge that wears down to pushFloor as
+ * the match drags on, and pushHold once they're on their way. Its base is
+ * its HQ where we know it stands (FFA_TACTICS.pushHq: a classic
+ * free-for-all), else its base Goliath: the first dug in, nearest its home
+ * corner (a Goliath is always in sight). One no walker of ours can walk to
+ * (across the water, or on a lift) is passed over for the next; the first
+ * they can reach decides (outgunned there, no push), and with none left the
+ * push is off: the Goliaths walk with the waves as before.
+ *
+ * Returns the target and the lead walker (the nearest that can get there:
+ * the army gathers on it, and the waves go once it is GOLIATH_AI.pushNear
+ * from the target), or null. The target is noted in `s.push`: the focus
+ * holds while a push is on (commander.ts pickFocus), so a march isn't
+ * turned round halfway by the focus moving on.
+ */
+export function planPush(w: World, faction: Faction, s: AiState, ctx: PushContext): { target: PushTarget; lead: Unit } | null {
+  const push = findPush(w, faction, s, ctx);
+  // (only once there has been a push: a duel's AiState is never touched)
+  if (push || s.push !== undefined) s.push = push?.target.id;
+  return push;
+}
+
+function findPush(w: World, faction: Faction, s: AiState, ctx: PushContext): { target: PushTarget; lead: Unit } | null {
+  if (!ctx.focus || !ffaTactic(w, "push") || ctx.mode !== "assault" || !pastLateSiege(w)) return null;
+  // (rules with HQs, a classic free-for-all: only by its own switch)
+  if (!goliathBase(w) && !FFA_TACTICS.pushHq) return null;
+  const m = memos.get(s);
+  if (!m) return null;
+  const walkers = goliathsOf(w, faction)
+    .filter((g) => m.plans.get(g.id)?.phase === "siege" && canWalk(g) && hpShare(g) >= GOLIATH_AI.siegeRetreat)
+    .sort(byId);
+  if (walkers.length === 0) return null;
+  const minutes = w.tick / TICK_RATE / 60 - GOLIATH_AI.lateSiege;
+  const edge = Math.max(GOLIATH_AI.pushFloor, GOLIATH_AI.pushEdge - GOLIATH_AI.pushDecay * minutes);
+  for (const target of pushTargets(ctx)) {
+    const able = walkers.filter((g) => walkable(w, g, target));
+    if (able.length === 0) continue; // (none of ours can walk there: the next)
+    const ours = ctx.armyValue + able.reduce((v, g) => v + threatValue(g), 0);
+    const need = s.push === target.id ? Math.min(edge, GOLIATH_AI.pushHold) : edge;
+    if (ours < need * defenceAt(w, faction, ctx.seen, target)) return null;
+    const lead = able.sort((a, b) => dist(a.x, a.y, target.x, target.y) - dist(b.x, b.y, target.x, target.y) || a.id - b.id)[0]!;
+    return { target, lead };
+  }
+  return null;
+}
+
+/**
+ * What a push may march on, best first: the focus's HQ where we know it
+ * stands (pushHq), else its Goliaths (not one in the air on a lift), dug in
+ * first, nearest its home corner.
+ */
+function pushTargets(ctx: PushContext): PushTarget[] {
+  if (ctx.enemyHq) {
+    if (!FFA_TACTICS.pushHq) return [];
+    return [{ id: ctx.enemyHq.id, ...kbCentre(ctx.enemyHq), building: true }];
+  }
+  const home = ctx.enemyHome;
+  return ctx.seen
+    .filter((e) => e.faction === ctx.focus && !!e.goliath && !isLifted(e))
+    .sort(
+      (a, b) =>
+        (isAnchored(b) ? 1 : 0) - (isAnchored(a) ? 1 : 0) || dist(a.x, a.y, home.x, home.y) - dist(b.x, b.y, home.x, home.y) || a.id - b.id
+    )
+    .map((e) => ({ id: e.id, x: e.x, y: e.y, building: false }));
+}
+
+/**
+ * What holds a spot: the enemy firepower we see within GOLIATH_AI.danger of
+ * it (threatValue: a Goliath by what it can still fire), and the known
+ * armed buildings there, at their price.
+ */
+function defenceAt(w: World, faction: Faction, seen: readonly Unit[], p: P): number {
+  let v = enemyNear(seen, p, GOLIATH_AI.danger);
+  for (const kb of knownBuildings(w, faction)) {
+    const c = kbCentre(kb);
+    if (BUILDINGS[kb.kind].dps > 0 && dist(c.x, c.y, p.x, p.y) <= GOLIATH_AI.danger) v += BUILDINGS[kb.kind].cost;
+  }
+  return v;
+}
+
+/**
+ * Is the match past GOLIATH_AI.lateSiege? A free-for-all's stalemate tactics
+ * (ai/ffa.ts: the push, wave hygiene, the escort trim, the calldown aim) start
+ * there, and leave the opening's four-way brawl as it was.
+ */
+export const pastLateSiege = (w: World): boolean => w.tick >= GOLIATH_AI.lateSiege * 60 * TICK_RATE;
+
+/** Is Goliath `id` walking with the waves (phase siege) by its plan? (commander.ts counts it toward a staged wave.) */
+export function sieging(s: AiState, id: number): boolean {
+  return memos.get(s)?.plans.get(id)?.phase === "siege";
 }
 
 // --- hunting enemy Goliaths ----------------------------------------------

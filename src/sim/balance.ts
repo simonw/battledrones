@@ -557,6 +557,12 @@ export const GOLIATH = {
   footprint: 2,
   /** Anchored: buildings may go up this far (tiles) from its centre to their footprint, as outposts. */
   buildRing: 3,
+  /**
+   * Anchored: scrap per second it salvages on its own (× the side's income, as the HQ's trickle):
+   * half an Uplink's pay, so a side with no HQ (the Armada, Nomads, an HQ lost) isn't left with
+   * nothing once the fields run dry.
+   */
+  trickle: OBJECTIVES.uplink.income / 2,
   /** Seconds a repaired weapon takes to reboot… */
   reboot: 2.5,
   /** …once HP is back this share of max above the line where it went offline (no flicker at the line). */

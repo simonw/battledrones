@@ -176,3 +176,19 @@ describe("Menders are shot first", () => {
     expect(flak.order).toMatchObject({ type: "attack", targetId: wasp.id });
   });
 });
+
+describe("Menders", () => {
+  it("never mend what is already destroyed this tick: a building at 0 hp falls, Mender or not", () => {
+    const w = createWorld(24, 24);
+    const depot = spawnBuilding(w, "depot", "blue", 10, 10);
+    spawnBuilding(w, "hq", "blue", 1, 1);
+    spawnBuilding(w, "hq", "red", 20, 20);
+    spawnUnit(w, "mender", "blue", 12.5, 9.2);
+    depot.hp = 300; // a hurt one it does mend…
+    step(w, []);
+    expect(depot.hp).toBeGreaterThan(300);
+    depot.hp = 0; // …but not one destroyed (as if shot down earlier in the tick): it would have stood at 1 hp
+    step(w, []);
+    expect(w.buildings.has(depot.id)).toBe(false);
+  });
+});

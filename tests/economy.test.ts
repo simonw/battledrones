@@ -3,7 +3,7 @@ import { BUILDINGS, ECONOMY, TICK_RATE, UNITS } from "../src/sim/balance";
 import { createSkirmishWorld } from "../src/sim/map";
 import { step } from "../src/sim/sim";
 import { Terrain } from "../src/sim/types";
-import { createWorld, hqOf, spawnBuilding, terrainAt } from "../src/sim/world";
+import { createWorld, hqOf, setTerrain, spawnBuilding, spawnUnit, terrainAt } from "../src/sim/world";
 
 describe("skirmish map", () => {
   it("has an HQ and a starting harvester per faction, and stocked scrap fields", () => {
@@ -138,5 +138,20 @@ describe("win condition", () => {
     redHq.hp = 0;
     step(w, []);
     expect(w.winner).toBe("blue");
+  });
+});
+
+describe("harvesting", () => {
+  it("hauls all of a tile: a scrap tile's 1500 reach the bank, and the tile is empty", () => {
+    const w = createWorld(24, 12);
+    spawnBuilding(w, "hq", "blue", 2, 4);
+    setTerrain(w, 9, 5, Terrain.Scrap);
+    const h = spawnUnit(w, "harvester", "blue", 8.5, 5.5);
+    h.order = { type: "harvest", fieldX: 9, fieldY: 5, phase: "toField" };
+    const i = 5 * w.width + 9;
+    // (2.1 a tick: kept as a whole number, a tile gave up 3 for every 2.1 hauled, 70% of it)
+    for (let t = 0; t < 6000 && (w.scrap[i]! > 0 || h.cargo > 0); t++) step(w, []);
+    expect(w.scrap[i]).toBe(0);
+    expect(w.factions.blue.stats.scrapHarvested).toBeCloseTo(ECONOMY.scrapPerTile, 6);
   });
 });

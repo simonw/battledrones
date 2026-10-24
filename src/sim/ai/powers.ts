@@ -1,10 +1,12 @@
-import { BUILDINGS, POWERS, TICK_RATE, UNITS } from "../balance";
+import { BUILDINGS, DAMAGE_VS, POWERS, TICK_RATE, UNITS } from "../balance";
 import { isVisible, knownBuildings } from "../fog";
 import { canWalk } from "../goliath";
 import { calldownBlocker, isStunned, powerStatus } from "../powers";
 import type { BuildingKind, Calldown, Command, Faction, PowerKind, Unit, World } from "../types";
 import { dist, domainOf, hqOf, moveClassOf, passable, regionAt } from "../world";
 import type { AiMode, AiState, Difficulty } from "./commander";
+import { ffaTactic } from "./ffa";
+import { pastLateSiege, type PushTarget } from "./goliath";
 import { seenEnemies } from "./intel";
 import { cos, hypot, sin } from "../fmath";
 import { QUARTER, turnVec } from "../sides";
@@ -28,6 +30,14 @@ const HAMMER_CLUMP = 700;
 const HOME_RADIUS = 11;
 /** Offensive EMPs only spend charge above this (keeps a Drop Pod's worth for defence). */
 const OFFENCE_RESERVE = 80;
+/**
+ * A free-for-all's Goliath push (ai/goliath.ts planPush): once its lead
+ * Goliath is this close (tiles) to the target, the Sky Hammer and the
+ * Barrage go there…
+ */
+const PUSH_STRIKE = 8;
+/** …at the target, or what stands within this many tiles of it (its Menders, its escort). */
+const PUSH_AIM = 4;
 
 interface Memo {
   /** Enemy calldowns already reacted to. */
@@ -134,6 +144,8 @@ export interface CalldownContext {
   army: Unit[];
   /** Visible armed intruders near our base or harvesters. */
   threats: { id: number; x: number; y: number }[];
+  /** A free-for-all's Goliath push under way (ai/goliath.ts planPush): its target, and where its lead Goliath is. */
+  push?: { target: PushTarget; lead: { x: number; y: number } } | null;
 }
 
 interface Clump {
@@ -144,17 +156,21 @@ interface Clump {
 
 /**
  * Densest visible enemy clump: tries every visible unit (and the centroid
- * of its neighbours) as a centre and scores what lies within `radius`.
+ * of its neighbours) as a centre and scores what lies within `radius`
+ * (`weight`: what a unit `d` tiles from the centre is worth).
  */
 function bestClump(
   units: Unit[],
   radius: number,
-  weight: (u: Unit) => number
+  weight: (u: Unit, d: number) => number
 ): Clump | null {
   let best: Clump | null = null;
   const score = (x: number, y: number) => {
     let v = 0;
-    for (const o of units) if (hypot(o.x - x, o.y - y) <= radius) v += weight(o);
+    for (const o of units) {
+      const d = hypot(o.x - x, o.y - y);
+      if (d <= radius) v += weight(o, d);
+    }
     return v;
   };
   for (const u of units) {
@@ -208,6 +224,23 @@ const hammerWorth = (w: World, kb: { id: number; kind: BuildingKind }): number =
     : PRODUCTION.includes(kb.kind) ? 1.5 : kb.kind === "hq" ? 1.2 : 1;
 
 /**
+ * What `damage` is worth against unit `u`, in scrap: its price times the
+ * share of its health it takes, all of it once it kills. (A free-for-all
+ * from 12:00 aims the Sky Hammer and the Barrage by this, not by the price
+ * of what's under the reticle: a full-health Goliath, 1600, always outbid a
+ * clump, yet a Hammer takes 260 of its 3000 and one Mender heals that in
+ * half a minute — so 139. A hurt one the blast would finish: its price.)
+ */
+const damageWorth = (u: Unit, damage: number): number => UNITS[u.kind].cost * Math.min(1, damage / Math.max(1, u.hp));
+/** The Sky Hammer's damage to a unit `d` tiles from where it lands (any armour, ground or air). */
+const hammerDamage = (d: number): number => POWERS.hammer.unitDamage * (1 - 0.5 * Math.min(1, d / POWERS.hammer.radius));
+/** A Barrage's to a ground unit `d` tiles from its aim: every shell's splash through its armour (the scatter averaged out). */
+const barrageDamage = (u: Unit, d: number): number => {
+  const b = POWERS.barrage;
+  return b.shells * b.damage * DAMAGE_VS.explosive[UNITS[u.kind].armor] * (1 - 0.5 * Math.min(1, d / b.splash));
+};
+
+/**
  * One decision pass's calldowns: at most one meter power, plus the Sky
  * Hammer when it is up. Defence first (EMP / Drop Pod against a superior
  * intrusion), then a Barrage on the best visible clump, then offence (EMP
@@ -223,10 +256,23 @@ export function planCalldowns(w: World, faction: Faction, s: AiState, ctx: Calld
   const ready = (p: PowerKind) => powerStatus(w, faction, p).ready;
   const visibleEnemies = seenEnemies(w, faction); // (a Sniper Team hidden in the woods isn't aimed at)
   const armed = visibleEnemies.filter((u) => UNITS[u.kind].dps > 0 || UNITS[u.kind].heal);
+  // (a free-for-all from 12:00: aimed by the damage they'd do, and at a push's target once its
+  // Goliaths are there — ai/ffa.ts calldown aim)
+  const aim = ffaTactic(w, "calldownAim") && pastLateSiege(w);
+  const push = aim && ctx.push ? ctx.push : null;
+  const strike = push && dist(push.lead.x, push.lead.y, push.target.x, push.target.y) <= PUSH_STRIKE ? push.target : null;
+  /** What stands by the push's target (it, its Menders, its escort). */
+  const atStrike = (us: Unit[]) => (strike ? us.filter((u) => dist(u.x, u.y, strike.x, strike.y) <= PUSH_AIM) : []);
 
   // --- Sky Hammer: a rich clump, else production, else the HQ -------------
+  // (a push's target: there, whatever it's worth — an HQ, or the best of what stands by its Goliath)
   if (ready("hammer")) {
-    const t = hammerTarget(w, faction, visibleEnemies);
+    const hammerWeight = (u: Unit, d: number) =>
+      (aim ? damageWorth(u, hammerDamage(d)) : UNITS[u.kind].cost) * (isStunned(w, u.id) ? 1.3 : 1);
+    const t =
+      strike?.building
+        ? strike
+        : bestClump(atStrike(visibleEnemies), POWERS.hammer.radius * 0.8, hammerWeight) ?? hammerTarget(w, faction, visibleEnemies, hammerWeight);
     if (t) fire("hammer", t.x, t.y);
   }
 
@@ -260,7 +306,11 @@ export function planCalldowns(w: World, faction: Faction, s: AiState, ctx: Calld
   // --- Barrage: the best visible ground clump (Easy never shells) ---------
   if (s.difficulty !== "easy" && ready("barrage")) {
     const ground = visibleEnemies.filter((u) => domainOf(u) === "ground"); // (a Goliath on a lift is in the air)
-    const clump = bestClump(ground, BARRAGE_SPREAD, (u) => UNITS[u.kind].cost * (isStunned(w, u.id) ? 1.5 : 1));
+    const barrageWeight = (u: Unit, d: number) =>
+      (aim ? damageWorth(u, barrageDamage(u, d)) : UNITS[u.kind].cost) * (isStunned(w, u.id) ? 1.5 : 1);
+    // (a push's target first, if a clump there is worth the shells)
+    const there = bestClump(atStrike(ground), BARRAGE_SPREAD, barrageWeight);
+    const clump = there && there.value >= BARRAGE_MIN ? there : bestClump(ground, BARRAGE_SPREAD, barrageWeight);
     if (clump && clump.value >= BARRAGE_MIN && fire("barrage", clump.x, clump.y)) return cmds;
   }
 
@@ -319,10 +369,15 @@ export function planCalldowns(w: World, faction: Faction, s: AiState, ctx: Calld
   return cmds;
 }
 
-/** Sky Hammer aim: a visible clump worth ≥ 700, else the best production hit, else the HQ. */
-function hammerTarget(w: World, faction: Faction, visibleEnemies: Unit[]): { x: number; y: number } | null {
+/** Sky Hammer aim: a visible clump worth ≥ 700 (`weight`, bestClump), else the best production hit, else the HQ. */
+function hammerTarget(
+  w: World,
+  faction: Faction,
+  visibleEnemies: Unit[],
+  weight: (u: Unit, d: number) => number
+): { x: number; y: number } | null {
   const R = POWERS.hammer.radius;
-  const clump = bestClump(visibleEnemies, R * 0.8, (u) => UNITS[u.kind].cost * (isStunned(w, u.id) ? 1.3 : 1));
+  const clump = bestClump(visibleEnemies, R * 0.8, weight);
   if (clump && clump.value >= HAMMER_CLUMP) return clump;
   const known = knownBuildings(w, faction);
   const centre = (kb: (typeof known)[number]) => ({

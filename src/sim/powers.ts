@@ -211,7 +211,10 @@ export function chargePowers(w: World): void {
   for (const f of sides) m[f] = Math.min(POWERS.meterMax, m[f]);
 }
 
-/** Who a calldown's kills are credited to: the HQ (so faction stats count them, and no unit takes their XP), else no one (0). */
+/**
+ * The attacker a calldown's hits name: the caster's HQ (no unit takes their XP), else none (0). The
+ * kill itself is the caster's either way: areaBlast and strikeDamage keep its side with each hit.
+ */
 const attackerOf = (w: World, f: Faction) => hqOf(w, f)?.id ?? 0;
 
 function impact(w: World, c: Calldown, x: number, y: number, hits: number, unitIds: number[] = []): void {
@@ -332,7 +335,7 @@ function landHammer(w: World, c: Calldown): void {
   }
   for (const b of w.buildings.values())
     if (b.faction !== c.faction && distToBuilding(b, c.x, c.y) <= h.radius) hits.push({ id: b.id, damage: h.buildingDamage });
-  strikeDamage(w, hits, attackerOf(w, c.faction));
+  strikeDamage(w, hits, attackerOf(w, c.faction), c.faction);
   impact(w, c, c.x, c.y, hits.length);
 }
 

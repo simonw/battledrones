@@ -196,6 +196,11 @@ export interface Unit {
   damagedTick: number;
   /** Who last hurt us (unit or building id) — idle units retaliate. */
   lastAttackerId: number | null;
+  /**
+   * The side of whoever last hurt us, kept with the hit: a free-for-all's kill credit when no unit
+   * or building of theirs is left to say (a calldown has none to point at; a shell outlives its gun).
+   */
+  lastAttackerSide?: Faction | null;
   /** Tick this unit last fired (renderer: recoil, turret settle). */
   firedTick: number;
   /** Combat experience: scrap value of enemies destroyed. */
@@ -250,6 +255,8 @@ export interface Building {
   cooldown: number;
   damagedTick: number;
   lastAttackerId: number | null;
+  /** The side of whoever last hurt it (Unit.lastAttackerSide). */
+  lastAttackerSide?: Faction | null;
   firedTick: number;
   /**
    * Placed in the build ring of an anchored Goliath, out of normal build range
@@ -765,8 +772,12 @@ export interface World {
   width: number;
   height: number;
   terrain: Uint8Array;
-  /** Scrap remaining per tile (only meaningful on scrap/crystal tiles). */
-  scrap: Uint16Array;
+  /**
+   * Scrap remaining per tile (only meaningful on scrap/crystal tiles). Floats: a harvester takes
+   * 2.1 a tick, and whole numbers would drop the tenths every tick (a tile gave up 3 for every 2.1
+   * mined, so a field yielded 70% of what it held).
+   */
+  scrap: Float64Array;
   /** Building id occupying each tile (0 = none) — O(1) footprint lookups. */
   occupancy: Int32Array;
   nextId: number;

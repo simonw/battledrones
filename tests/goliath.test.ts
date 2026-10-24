@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { planMenders } from "../src/sim/ai/menders";
-import { BUILDINGS, COMBAT, ECONOMY, GOLIATH, SALVAGE, TERRAIN, TICK_RATE, UNITS } from "../src/sim/balance";
+import { BUILDINGS, COMBAT, ECONOMY, GOLIATH, OBJECTIVES, SALVAGE, TERRAIN, TICK_RATE, UNITS } from "../src/sim/balance";
 import { findTarget } from "../src/sim/combat";
 import { buildingBlocker, canPlaceBuilding, unitBlocker } from "../src/sim/economy";
 import { isVisible, tickFog } from "../src/sim/fog";
@@ -499,9 +499,12 @@ describe("scrap drop-off", () => {
     h.cargo = ECONOMY.harvesterCapacity;
     h.order = { type: "harvest", fieldX: 56, fieldY: 11, phase: "toBase" };
     const s0 = w.factions.blue.scrap;
+    const t0 = w.tick;
     const fx: FxEvent[] = [];
     runUntil(w, () => h.cargo === 0, 200, fx);
-    expect(w.factions.blue.scrap).toBeCloseTo(s0 + ECONOMY.harvesterCapacity, 6);
+    // (and the Goliath's own trickle, paid at each whole second)
+    const seconds = Math.floor(w.tick / TICK_RATE) - Math.floor(t0 / TICK_RATE);
+    expect(w.factions.blue.scrap).toBeCloseTo(s0 + ECONOMY.harvesterCapacity + GOLIATH.trickle * seconds, 6);
     const dep = evs(fx, "deposit");
     expect(dep.length).toBeGreaterThan(0);
     expect(Math.hypot(dep[0]!.x - 48, dep[0]!.y - 12)).toBeLessThan(1.5);
@@ -649,6 +652,7 @@ describe("training infantry", () => {
   it("is refused while walking (and while digging in), and for anything but infantry", () => {
     const w = field();
     w.factions.blue.scrap = 5000;
+    w.factions.blue.incomeMult = 0; // (no trickle once it's dug in: only an order it took could change the bank)
     const g = spawnUnit(w, "goliath", "blue", 30, 30);
     step(w, [produce("blue", g.id, "trooper")]);
     expect(g.goliath!.queue).toHaveLength(0);
@@ -1680,5 +1684,28 @@ describe("determinism", () => {
     expect(two).toBe(one);
     // (and it did something: a Goliath fell and scattered its salvage)
     expect(JSON.parse(one).wrecks.some((r: unknown[]) => r[4] === true)).toBe(true);
+  });
+});
+
+describe("the anchored Goliath's trickle", () => {
+  it("salvages GOLIATH.trickle (half an Uplink's pay) a second while dug in, × the side's income; walking, nothing", () => {
+    const w = field();
+    const g = spawnUnit(w, "goliath", "blue", 30, 30);
+    const s0 = w.factions.blue.scrap;
+    run(w, 10 * TICK_RATE);
+    expect(w.factions.blue.scrap).toBe(s0); // (walking: and field() has no HQ trickle)
+    run(w, ANCHOR_TICKS + 1, [anchorCmd(g)]);
+    expect(g.goliath!.mode).toBe("anchored");
+    const s1 = w.factions.blue.scrap;
+    const t1 = w.tick;
+    run(w, 30 * TICK_RATE);
+    const seconds = Math.floor(w.tick / TICK_RATE) - Math.floor(t1 / TICK_RATE);
+    expect(w.factions.blue.scrap - s1).toBeCloseTo(GOLIATH.trickle * seconds, 9);
+    expect(GOLIATH.trickle).toBe(OBJECTIVES.uplink.income / 2);
+    // a richer side (an AI's handicap, a mutator) gets its share, as the HQ's trickle does
+    w.factions.blue.incomeMult = 2;
+    const s2 = w.factions.blue.scrap;
+    run(w, 10 * TICK_RATE);
+    expect(w.factions.blue.scrap - s2).toBeCloseTo(2 * GOLIATH.trickle * 10, 9);
   });
 });

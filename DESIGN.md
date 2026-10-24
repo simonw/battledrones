@@ -256,7 +256,16 @@ broad headlands and coves, and which leaves the necks as they are.
   other drop-off the moment it starts packing up; with none left, a loaded
   harvester waits for a Goliath to dig in again instead of going idle.
 - Each HQ also salvages a trickle of 2 scrap/second, so no side can be left
-  permanently broke (a Goliath doesn't, so under Nomads there is none).
+  permanently broke, and each anchored Goliath 0.75 (half an Uplink's pay:
+  `GOLIATH.trickle`), so a side with no HQ (the Armada, Nomads, an HQ lost)
+  isn't left with nothing once the fields run dry. Four AIs under the
+  Goliath Armada once mined Compass Rose out by 10:00, and the three sides
+  without Uplinks earned nothing for the hour after.
+- A scrap tile holds 1500 and a crystal tile 1200, and all of it can be
+  mined: field scrap is kept as a float. (Through v14 it was kept as a
+  whole number, which dropped the tenths of every 2.1 a harvester takes
+  each tick, so a tile gave up 3 for every 2.1 hauled and a field yielded
+  70%.)
 - Starting stockpile: 600 scrap, one harvester and one Trooper Squad, plus
   the side's opener (below) — so in practice two or three harvesters and a
   factory.
@@ -2108,7 +2117,8 @@ Reasons to come back between matches. Spectated games never count.
     Harvesters (`trainableAt`), and with no HQ to count as base every
     building goes up as an outpost in a Goliath's ring, the opener's
     factory included (the openers set up round the Goliath). There is no
-    HQ trickle, calldowns work with a Goliath and no HQ, the camera opens
+    HQ trickle (the anchored Goliath's own, half an Uplink's, stands in),
+    calldowns work with a Goliath and no HQ, the camera opens
     on the Goliath, and a side is beaten when its last Goliath falls. On
     the Archipelago `Rules.homeTiles` still marks each side's home land.
   - 💘 **Robot Love** ("Two enemy Goliaths that meet fall in love, and the
