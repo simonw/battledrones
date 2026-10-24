@@ -107,6 +107,6 @@ export function tickCrush(w: World, moved: readonly Unit[]): void {
         w.fx.push({ type: "crush", faction: v.faction, id: v.id, attackerId: t.id, x: v.x, y: v.y });
       hits.push({ id: v.id, damage });
     }
-    if (hits.length > 0) strikeDamage(w, hits, t.id);
+    if (hits.length > 0) strikeDamage(w, hits, t.id, t.faction);
   }
 }

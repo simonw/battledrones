@@ -331,6 +331,7 @@ export function dropLifts(w: World): void {
     release(w, g);
     if (phase === "hooking") continue;
     const killer = down?.lastAttackerId ?? g.lastAttackerId ?? 0;
+    const killerSide = down?.lastAttackerSide ?? g.lastAttackerSide ?? null;
     // the tile under it in its side's frame (as canBailOut takes it for squads: mirror-fair on a tile edge)
     const fr = sideFrame(w, g.faction);
     const fp = fr.toFrame(g);
@@ -345,7 +346,7 @@ export function dropLifts(w: World): void {
       } else lands = false;
     }
     const damage = lands ? UNITS.goliath.hp * GOLIATH.lift.dropDamage : g.hp;
-    if (g.hp > 0) strikeDamage(w, [{ id: g.id, damage }], killer); // (already shot down itself: its own killer keeps the credit)
+    if (g.hp > 0) strikeDamage(w, [{ id: g.id, damage }], killer, killerSide); // (already shot down itself: its own killer keeps the credit)
     if (!lands) g.hp = Math.min(g.hp, 0); // (destroyed whatever its armour)
     g.order = { type: "idle" };
     g.path = null;

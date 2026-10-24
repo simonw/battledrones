@@ -199,7 +199,10 @@ The Goliath has two modes, and switching between them takes time.
   training.
 - **Anchored:** a scrap drop-off for harvesters, building is allowed within
   3 tiles of it, and it trains infantry squads (only while anchored). It
-  fires normally while anchored.
+  salvages 0.75 scrap a second on its own (half an Uplink's pay,
+  `GOLIATH.trickle`, × the side's income like the HQ's trickle), so a side
+  with no HQ isn't left with nothing once the fields run dry. It fires
+  normally while anchored.
 - **Where it can anchor:** anywhere a building could be placed (buildable
   ground, no building or unit in the way), with no build-range requirement.
 - **Anchoring animation:** the body lowers on hydraulics, the legs splay and

@@ -473,13 +473,14 @@ export function nearestReachableResource(
   return null;
 }
 
-/** Passive HQ income so no side can be left permanently broke. */
+/** Passive income so no side can be left permanently broke: every HQ's, and every anchored Goliath's (half an Uplink's). */
 export function tickTrickle(w: World): void {
   if ((w.tick + 1) % TICK_RATE !== 0) return; // once per full second
   for (const b of w.buildings.values())
     if (b.kind === "hq") {
       w.factions[b.faction].scrap += (rulesOf(w).hqTrickle ?? ECONOMY.hqTrickle) * incomeOf(w, b.faction);
     }
+  for (const u of w.units.values()) if (isAnchored(u)) w.factions[u.faction].scrap += GOLIATH.trickle * incomeOf(w, u.faction);
 }
 
 /** Distance from a point to a drop site's footprint (0 inside). */

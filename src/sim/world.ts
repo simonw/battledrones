@@ -30,7 +30,7 @@ export function createWorld(width: number, height: number): World {
     width,
     height,
     terrain: new Uint8Array(width * height),
-    scrap: new Uint16Array(width * height),
+    scrap: new Float64Array(width * height),
     occupancy: new Int32Array(width * height),
     nextId: 1,
     units: new Map(),

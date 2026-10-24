@@ -9,7 +9,7 @@ import { calldownBlocker, isStunned, powerStatus, telegraphTicks } from "../src/
 import { step } from "../src/sim/sim";
 import { Terrain, type Command, type Faction, type FxEvent, type PowerKind, type World } from "../src/sim/types";
 import { createWorld, setTerrain, spawnBuilding, spawnUnit } from "../src/sim/world";
-import { perSide } from "../src/sim/sides";
+import { FACTIONS, perSide } from "../src/sim/sides";
 
 /** A small open field with both HQs, fog computed, meters full. */
 function arena(size = 40): World {
@@ -158,6 +158,24 @@ describe("barrage", () => {
     expect(death).toBeDefined();
     const blueHq = [...w.buildings.values()].find((b) => b.kind === "hq" && b.faction === "blue")!;
     expect(death.killerId).toBe(blueHq.id);
+    expect(w.factions.blue.stats.unitsKilled).toBe(1);
+  });
+
+  it("in a free-for-all, a side with no HQ still makes its kills (stats, ⚡ and the death's `by`)", () => {
+    const w = createWorld(40, 40);
+    w.sides = [...FACTIONS];
+    spawnUnit(w, "goliath", "blue", 4, 4); // (no HQ: the Armada's way; the Goliath keeps blue in the match)
+    spawnBuilding(w, "hq", "red", 35, 35);
+    spawnBuilding(w, "hq", "green", 2, 35);
+    spawnBuilding(w, "hq", "purple", 35, 2);
+    w.powers.meter.blue = 100;
+    reveal(w, "blue");
+    const foe = dummy(w, "mortar", "red", 20, 20);
+    const fx = run(w, 40, [call("blue", "barrage", 20, 20)]);
+    const death = fx.find((e) => e.type === "death" && e.id === foe.id) as Extract<FxEvent, { type: "death" }>;
+    expect(death).toBeDefined();
+    expect(death.killerId).toBeNull(); // (no unit of blue's takes the XP)
+    expect(death.by).toBe("blue");
     expect(w.factions.blue.stats.unitsKilled).toBe(1);
   });
 
