@@ -9,13 +9,14 @@ import { earlyCallBonus, survivalHoldPoint, waveBudget } from "../modes/survival
 import { findPath } from "../movement";
 import { isWoundedVeteran, veteranRetreats } from "./veterans";
 import { planMenders } from "./menders";
-import { bannedBy, infantryArmy } from "../rules";
+import { bannedBy, goliathBase, infantryArmy } from "../rules";
 import { planSalvage } from "./salvage";
 import { objectiveHolds, planObjectives } from "./objectives";
 import { dodgeCalldowns, dodgingUnits, planCalldowns } from "./powers";
 import { AIRBORNE_INFANTRY, condorHolds, flysGivenCondor, planCondor, wantCondor } from "./condor";
 import { AIRLIFT, airliftActive, airliftHolds, airliftSquadsWanted, airliftWantsCondor, offHomeLand, planAirlift } from "./airlift";
 import { AA_COVER, USELESS, aaSources, aaStrengthAt, aaWeight, effectivenessVs, seenEnemies, unitAntiAir } from "./intel";
+import { ffaTactic } from "./ffa";
 import {
   GOLIATH_AI,
   enemyGantryBuilds,
@@ -35,9 +36,13 @@ import {
   outpostSpot,
   outpostWanted,
   planGoliaths,
+  pastLateSiege,
+  planPush,
+  sieging,
   threatValue,
   wantGantry,
-  wantGoliath
+  wantGoliath,
+  type PushTarget
 } from "./goliath";
 import { canWalk, distToFootprint, goliathsOf, hasGoliath, isAnchored, repairUrgency, trainableAt, unitCost } from "../goliath";
 import type {
@@ -248,6 +253,10 @@ export interface AiState {
    */
   focus?: Faction | null;
   focusUntil?: number;
+  /** A free-for-all's Goliath push under way (ai/goliath.ts planPush): the id of what it marches on. It holds the focus. */
+  push?: number;
+  /** A free-for-all: no field is left anywhere on the map (fields never grow back, so it stays so). */
+  dry?: boolean;
 }
 
 /**
@@ -289,6 +298,13 @@ const RETREAT_ARMY_VALUE = 350;
 const WAVE_LAUNCH = 0.75;
 /** No raids before this: an opener's starting units guard home while both sides settle in. */
 const OPENING_GRACE = 45 * TICK_RATE;
+/**
+ * A new Scout this long (s) after the last was ordered; a free-for-all's
+ * mined-out map with every rival's base known, only this often (ai/ffa.ts
+ * dry economy: Scouts were a tenth of a broke side's spend).
+ */
+const SCOUT_SECS = 60;
+const DRY_SCOUT_SECS = 240;
 /** Enemy army value at the HQ that, if it outguns the home guard, recalls everyone. */
 const HOME_ALARM_VALUE = 400;
 /** Visible armed enemies this close to our buildings/harvesters are threats. */
@@ -327,6 +343,9 @@ function homeOf(w: World, faction: Faction, rival: Faction, origin: { x: number;
  * rival that looks easiest: near (its base's distance from ours), and hurt
  * (its HQ's health, when we have seen it), with a seeded shuffle so four
  * commanders don't all pile onto the same one. Knocked-out sides are skipped.
+ * While our Goliaths push on its base (ai/goliath.ts planPush) the focus
+ * holds past FOCUS_SECS: a march on one neighbour isn't turned round
+ * halfway for the other.
  */
 function pickFocus(w: World, faction: Faction, s: AiState, origin: { x: number; y: number }, raiders: Map<Faction, number>): Faction | null {
   const rivals = rivalsOf(w, faction).filter((f) => !isOut(w, f));
@@ -346,6 +365,7 @@ function pickFocus(w: World, faction: Faction, s: AiState, origin: { x: number; 
     return grudge;
   }
   if (s.focus && rivals.includes(s.focus) && w.tick < (s.focusUntil ?? 0)) return s.focus;
+  if (s.focus && rivals.includes(s.focus) && s.push !== undefined && ffaTactic(w, "push")) return s.focus;
   let best: Faction | null = null;
   let bestScore = Infinity;
   for (const f of rivals) {
@@ -435,6 +455,11 @@ export function tickAi(w: World, faction: Faction, s: AiState): Command[] {
   const ourSide = (tx: number, ty: number) =>
     dist(tx + 0.5, ty + 0.5, hqC.x, hqC.y) <= dist(tx + 0.5, ty + 0.5, enemyHome.x, enemyHome.y);
   const nearestField = nearestScrapTile(w, hqC.x, hqC.y, faction);
+  // a free-for-all's map mined out (fields never grow back): no more Harvesters, garrison squads
+  // or searches for a field for it, and fewer Scouts (ai/ffa.ts; the leader's late income went on
+  // squads that trickled into the rivals' Goliath rings, and broke sides rebought Harvesters)
+  if (ffaTactic(w, "dryEconomy") && !nearestField) s.dry = true;
+  const dry = !!s.dry && ffaTactic(w, "dryEconomy");
   const activeField = nearestField && (!islandMap || ourSide(nearestField.x, nearestField.y)) ? nearestField : null;
   /** Where the economy needs defending: the mined field, shaded toward home. */
   const guardPoint = activeField
@@ -499,9 +524,9 @@ export function tickAi(w: World, faction: Faction, s: AiState): Command[] {
   const depots = myBuildings.filter((b) => b.kind === "depot").length;
   // (island maps: only fields on our side of the bridges; none left, no more harvesters —
   // and no search: a search for a field that isn't there floods the whole landmass)
-  const fieldsLeft = !islandMap || ownFieldLeft(w, hqC, ourSide);
+  const fieldsLeft = !dry && (!islandMap || ownFieldLeft(w, hqC, ourSide));
   const fieldFrom = (x: number, y: number) =>
-    !islandMap ? nearestReachableResource(w, x, y, faction) : fieldsLeft ? nearestReachableResource(w, x, y, faction, ourSide) : null;
+    dry ? null : !islandMap ? nearestReachableResource(w, x, y, faction) : fieldsLeft ? nearestReachableResource(w, x, y, faction, ourSide) : null;
   // the fields our dug-in Goliaths work (ai/goliath.ts): harvesters sent out, and more built for them
   const goliathFields = goliathHarvest(w, faction, s, harvesters, () => {
     const at = fieldFrom(hqC.x, hqC.y);
@@ -602,8 +627,9 @@ export function tickAi(w: World, faction: Faction, s: AiState): Command[] {
       liftWants--;
       produce(bay, kind);
     }
-    // anchored Goliaths train the squads that stand by them (ai/goliath.ts)
-    if (!liftOnly) for (const t of goliathBarracks(w, faction, s, () => rand(s), !!hq)) produce(t, t.kind);
+    // anchored Goliaths train the squads that stand by them (ai/goliath.ts) — not on a mined-out
+    // map: the scrap goes to the main producers
+    if (!liftOnly && !dry) for (const t of goliathBarracks(w, faction, s, () => rand(s), !!hq)) produce(t, t.kind);
   };
   // (island relays: tanks only reach the islands' war over the bridges, at the enemy's base —
   // a capped share of the force, the rest goes to squads, Condors and the air that holds islands)
@@ -633,6 +659,11 @@ export function tickAi(w: World, faction: Faction, s: AiState): Command[] {
       produce(fab, kind);
     }
   };
+  // (every rival's base known: no HQ under these rules, and Goliaths always in sight; else each one's HQ seen)
+  const basesKnown =
+    dry &&
+    (goliathBase(w) || rivalsOf(w, faction).every((r) => isOut(w, r) || knownBuildings(w, faction).some((kb) => kb.kind === "hq" && kb.faction === r)));
+  const scoutSecs = basesKnown ? DRY_SCOUT_SECS : SCOUT_SECS;
   const runPads = () => {
     for (const pad of myBuildings.filter((b) => b.kind === "airpad")) {
       if (pad.queue.length >= depth) continue;
@@ -650,7 +681,7 @@ export function tickAi(w: World, faction: Faction, s: AiState): Command[] {
         Math.max(goliaths.length > 0 ? 1 : 0, goliaths.filter((g) => repairUrgency(g) > 0 || g.hp < UNITS.goliath.hp * 0.85).length * 3)
       );
       let kind: UnitKind;
-      if (have("scout") < 1 && w.tick - s.lastScoutTick > 60 * TICK_RATE) {
+      if (have("scout") < 1 && w.tick - s.lastScoutTick > scoutSecs * TICK_RATE) {
         kind = "scout";
         s.lastScoutTick = w.tick;
       }
@@ -791,9 +822,14 @@ export function tickAi(w: World, faction: Faction, s: AiState): Command[] {
   // --- 1c. Goliaths: ours dig in, hold, move on, lift, walk with a wave; theirs are hunted (ai/goliath.ts)
   // (escorts and strikes already under way stay on task)
   for (const id of goliathHolds(w, s)) used.add(id);
-  const staging = towardEnemy(w, hqC, 9, enemyHqPos);
+  // (a free-for-all from 12:00: our Goliaths walking with the waves march on the focus's base once
+  // they and the army outgun what holds it, ai/goliath.ts planPush; the army gathers on the lead one)
+  const push = planPush(w, faction, s, { focus, seen, armyValue, mode: s.mode, enemyHq: enemyHqKnown ?? null, enemyHome });
+  const staging = push ? { x: push.lead.x, y: push.lead.y } : towardEnemy(w, hqC, 9, enemyHqPos);
   cmds.push(
-    ...planGoliaths(w, faction, s, { army, used, hqC, enemyHqPos, seen, mode: s.mode, threatened, staging, guardPoint, hasHq: !!hq })
+    ...planGoliaths(w, faction, s, {
+      army, used, hqC, enemyHqPos, seen, mode: s.mode, threatened, staging, guardPoint, hasHq: !!hq, push: push?.target ?? null
+    })
   );
   cmds.push(...huntGoliaths(w, faction, s, { army, used, seen, enemyHqPos, mode: s.mode, threatened }));
 
@@ -863,17 +899,24 @@ export function tickAi(w: World, faction: Faction, s: AiState): Command[] {
     // (a Goliath waiting there to walk with the wave counts for what it can fire, ai/goliath.ts, but
     // never for more than the army staged beside it: alone it would launch empty waves every pass,
     // and the rest of the army would never be called up to the staging point)
+    // (a free-for-all from 12:00: only a Goliath walking with the waves counts — the others stayed
+    // put as the wave went, and two or three units at a time were launched into a Goliath's ring
+    // on their credit — and only beside a wave big enough to lead one, GOLIATH_AI.company)
+    const hygiene = ffaTactic(w, "waveHygiene") && pastLateSiege(w);
     const goliathStaged = goliaths.reduce(
-      (v, g) => (canWalk(g) && dist(g.x, g.y, staging.x, staging.y) <= STAGE_RADIUS ? v + threatValue(g) : v),
+      (v, g) => (canWalk(g) && (!hygiene || sieging(s, g.id)) && dist(g.x, g.y, staging.x, staging.y) <= STAGE_RADIUS ? v + threatValue(g) : v),
       0
     );
-    const stagedValue = value(staged) + Math.min(goliathStaged, value(staged));
+    const credit = hygiene && value(staged) < GOLIATH_AI.company ? 0 : Math.min(goliathStaged, value(staged));
+    const stagedValue = value(staged) + credit;
     // Air War: fragile aircraft trickling in just feed the defences, so launch one big wave
     const airWar = bannedBy(w, "fab-plant", faction) !== null && !infantryWar;
     const launchAt = airWar ? assaultAt : Math.max(450, assaultAt * WAVE_LAUNCH);
+    // (a push: the waves go with the Goliaths, once the lead one is near its target, and at it)
+    const pushReady = !push || dist(push.lead.x, push.lead.y, push.target.x, push.target.y) <= GOLIATH_AI.pushNear;
 
-    if (stagedValue >= launchAt) {
-      const target = pickPriorityTarget(w, faction, seen, enemyHqPos, focus);
+    if (stagedValue >= launchAt && pushReady) {
+      const target = push ? pushTarget(w, push.target) : pickPriorityTarget(w, faction, seen, enemyHqPos, focus);
       // robot infantry still marching up (1.6–1.8 tiles/s) goes with the wave, not left for the next one
       const marching = army.filter(
         (u) =>
@@ -920,7 +963,7 @@ export function tickAi(w: World, faction: Faction, s: AiState): Command[] {
   );
 
   // --- 4c. commander calldowns (ai/powers.ts) ------------------------------
-  cmds.push(...planCalldowns(w, faction, s, { mode: s.mode, hqC, guardPoint, enemyHqPos, army, threats }));
+  cmds.push(...planCalldowns(w, faction, s, { mode: s.mode, hqC, guardPoint, enemyHqPos, army, threats, push }));
 
   return cmds;
 }
@@ -958,18 +1001,29 @@ interface PriorityTarget {
  * seen gone, its Goliaths are what's left to beat, so they come first; and
  * with nothing else known, the nearest Goliath beats an empty plot.
  * A free-for-all's `focus`: that rival's first; anyone's when none of its is known.
+ * (`owner`: only that rival's buildings count.)
  */
-function pickPriorityTarget(w: World, faction: Faction, seen: Unit[], fallback: { x: number; y: number }, focus: Faction | null = null): PriorityTarget {
+function pickPriorityTarget(
+  w: World,
+  faction: Faction,
+  seen: Unit[],
+  fallback: { x: number; y: number },
+  focus: Faction | null = null,
+  owner: Faction | null = null
+): PriorityTarget {
   if (focus) {
-    const theirs = pickPriorityTarget(w, faction, seen.filter((u) => u.faction === focus), fallback, null);
+    // (from 12:00 its buildings as well as its units: else, with none of its production known, a
+    // wave went at another rival's, the one nearest its corner — ai/ffa.ts wave hygiene)
+    const onlyTheirs = ffaTactic(w, "waveHygiene") && pastLateSiege(w);
+    const theirs = pickPriorityTarget(w, faction, seen.filter((u) => u.faction === focus), fallback, null, onlyTheirs ? focus : null);
     const ownerOf = (id?: number) => (id === undefined ? null : (w.units.get(id) ?? w.buildings.get(id))?.faction ?? knownBuildings(w, faction).find((kb) => kb.id === id)?.faction ?? null);
     if (theirs.id !== undefined && ownerOf(theirs.id) === focus) return theirs;
     const any = pickPriorityTarget(w, faction, seen, fallback, null);
     return any.id !== undefined ? any : theirs;
   }
-  const building = enemyGantryBuilds(w, faction).sort(
-    (a, b) => dist(a.x, a.y, fallback.x, fallback.y) - dist(b.x, b.y, fallback.x, fallback.y) || a.id - b.id
-  )[0];
+  const building = enemyGantryBuilds(w, faction)
+    .filter((g) => !owner || w.buildings.get(g.id)?.faction === owner)
+    .sort((a, b) => dist(a.x, a.y, fallback.x, fallback.y) - dist(b.x, b.y, fallback.x, fallback.y) || a.id - b.id)[0];
   if (building) return { id: building.id, x: building.x, y: building.y, domain: "ground", armor: "structure" };
   const enemyGoliaths = seen
     .filter((u) => !!u.goliath)
@@ -988,7 +1042,7 @@ function pickPriorityTarget(w: World, faction: Faction, seen: Unit[], fallback: 
     }
   }
   if (best) return best;
-  const known = knownBuildings(w, faction);
+  const known = knownBuildings(w, faction).filter((kb) => !owner || kb.faction === owner);
   for (const kinds of [["gantry", "fab-plant", "airpad", "assembly-bay", "tech-lab", "depot"], ["turret", "sam-site", "radar"], ["hq"]] as const) {
     const cands = known.filter((kb) => (kinds as readonly string[]).includes(kb.kind));
     // by footprint centre (a top-left corner is not mirror-symmetric)
@@ -1006,6 +1060,12 @@ function pickPriorityTarget(w: World, faction: Faction, seen: Unit[], fallback: 
   }
   if (goliath) return goliathTarget(goliath);
   return { x: fallback.x, y: fallback.y, domain: "ground", armor: "structure" };
+}
+
+/** A free-for-all push's target (ai/goliath.ts planPush) as a wave's: the focus's base Goliath, or its HQ. */
+function pushTarget(w: World, t: PushTarget): PriorityTarget {
+  const g = t.building ? undefined : w.units.get(t.id);
+  return { id: t.id, x: t.x, y: t.y, domain: g ? domainOf(g) : "ground", armor: t.building ? "structure" : UNITS.goliath.armor };
 }
 
 /** Send a wave at a target: attackers attack it, the rest (and anything that can't hurt it, a Sniper Team at a building) escort. */

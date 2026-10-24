@@ -76,6 +76,23 @@ Otherwise the focus holds for 100 s, then moves to the rival that looks
 easiest: near, and hurt if its HQ has been seen. A seeded shuffle keeps four
 commanders from all piling onto the same one.
 
+**Closing it out.** Three rivals can stall a side that has plainly won: four
+AIs under the Goliath Armada once played on for an hour after 12:00, the
+leader's walking Goliaths parked at its staging point while its waves
+trickled into the rivals' Goliath rings. So from 12:00 a commander's
+Goliaths that walk with the waves march on its focus's base (its base
+Goliath, dug in first; its HQ when there is one and we know where), the army
+gathered on the lead one, once together they outgun what holds it 1.5 to 1
+(an edge that wears down to 1.05 as the match drags on), and the focus holds
+until the march is over (`planPush` in `ai/goliath.ts`). From 12:00 too its
+waves go at the focus's own buildings, a Goliath counts toward a wave only
+when it walks with one, the escort a Goliath no longer needs stands down
+(not one marching with the waves); a mined-out map gets no more Harvesters
+or garrison squads, and fewer Scouts. `ai/ffa.ts` lists these tactics, with
+the switches (`FFA_TACTICS`) tests and tools turn off to measure each, and
+one that is off: aiming the Sky Hammer and the Barrage by the damage they'd
+do, which slowed the close. None of it reaches a two-player match.
+
 **Presentation.** Green and purple have their own model paint, minimap
 colours and HUD portraits (`public/assets/icons/green/`, `…/purple/`). The
 report shows the finishing order, a four-line chart and four stat columns;
@@ -271,6 +288,7 @@ finished battle.
 | `src/sim/maps.ts` | Compass Rose, the four-way painter, `setupFourCorners` |
 | `src/sim/combat.ts` | Knockouts (`eliminate`, `isOut`, `sidesLeft`) and the free-for-all win |
 | `src/sim/ai/commander.ts` | The focus rival |
+| `src/sim/ai/ffa.ts` | The commander's free-for-all tactics and their switches (`FFA_TACTICS`); the push is `planPush` in `ai/goliath.ts` |
 | `src/net/relay-socket.ts` | One seat of a relay room that reconnects by itself (shared with the online duel) |
 | `src/ffa/protocol.ts` | Messages, the turn log's events, invite links, validation, message packing |
 | `src/ffa/match.ts` | The battle as every page plays it: the world, the log, the commanders, the record |
@@ -296,6 +314,10 @@ it imports neither the sound duel nor the battle viewer
   the host leaving, the stand-in notices.
 - `tests/objectives.test.ts` and others: the four-way Uplinks and crates,
   quarter turns, free-for-all rules.
+- `tests/ai-goliath.test.ts` ("a free-for-all"): the Goliath push (from
+  12:00, only with the edge, the focus held, a target out of reach passed
+  over, never in a duel), the mined-out economy and the Sky Hammer's aim
+  (switched on for the test).
 - `node tools/ffa-smoke.mjs` (after `npm run build`): three browser pages,
   the host and two friends, play a battle on Compass Rose through the
   deployed relay, with an AI on the fourth seat. It checks the lobby and the

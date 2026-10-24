@@ -2,14 +2,15 @@ import { describe, expect, it } from "vitest";
 import { STRATEGIES, createAiState, tickAi, type AiState, type Difficulty, type StrategyName } from "../src/sim/ai/commander";
 import { canPlaceBuilding } from "../src/sim/economy";
 import { GOLIATH_AI, goliathPhases, goliathSite, liftCondors } from "../src/sim/ai/goliath";
+import { FFA_TACTICS } from "../src/sim/ai/ffa";
 import { planMenders } from "../src/sim/ai/menders";
 import { BUILDINGS, GOLIATH, TICK_RATE, UNITS } from "../src/sim/balance";
 import { tickFog } from "../src/sim/fog";
 import { goliathCost, goliathsOf, isAnchored } from "../src/sim/goliath";
 import { createMapWorld } from "../src/sim/maps";
 import { step } from "../src/sim/sim";
-import type { BuildingKind, Command, Faction, FxEvent, Unit, World } from "../src/sim/types";
-import { buildingCenter, hqOf, regionAt, removeBuilding, spawnBuilding, spawnUnit } from "../src/sim/world";
+import { Terrain, type BuildingKind, type Command, type Faction, type FxEvent, type Unit, type World } from "../src/sim/types";
+import { buildingCenter, hqOf, regionAt, removeBuilding, setTerrain, spawnBuilding, spawnUnit } from "../src/sim/world";
 import { perSide } from "../src/sim/sides";
 
 /**
@@ -622,5 +623,126 @@ describe("final review regressions", () => {
     expect(packed).toBe(false);
     expect(red.goliath!.mode).toBe("anchored");
     expect(w.winner).toBeNull();
+  }, 60000);
+});
+
+describe("a free-for-all (ai/ffa.ts)", () => {
+  /**
+   * Nomads on `map` at `minutes`, the fields mined out: red (Skyforce) has its
+   * base Goliath dug in, three more walking a few tiles out toward the middle
+   * and an army of Stingers; its rival `foe` (red's focus on Compass Rose) has
+   * its one Goliath dug in at home, and its starting squad.
+   */
+  function goliathWar(map: string, minutes: number, foe: Faction) {
+    const w = createMapWorld(map, { mutators: ["nomads"] });
+    w.scrap.fill(0);
+    w.tick = minutes * 60 * TICK_RATE;
+    const ai = createAiState("skyforce", "normal", 1);
+    if (map === "compass-rose") {
+      ai.focus = foe;
+      ai.focusUntil = Infinity;
+    }
+    const base = goliathsOf(w, "red")[0]!;
+    const k = 1 / Math.hypot(w.width / 2 - base.x, w.height / 2 - base.y);
+    const [dx, dy] = [(w.width / 2 - base.x) * k, (w.height / 2 - base.y) * k];
+    const walkers = [-3, 0, 3].map((o) => spawnUnit(w, "goliath", "red", base.x + dx * 7 - dy * o, base.y + dy * 7 + dx * o));
+    for (let i = 0; i < 12; i++) spawnUnit(w, "stinger", "red", base.x + dx * 10 - dy * (i % 4 - 1.5), base.y + dy * 10 + dx * (i % 4 - 1.5) + Math.floor(i / 4) * dy);
+    return { w, ai, walkers, target: goliathsOf(w, foe)[0]! };
+  }
+  const near = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.hypot(a.x - b.x, a.y - b.y) < 1;
+
+  it("from 12:00 the walking Goliaths march on the focus's base Goliath once they outgun it, and the focus holds while they do", () => {
+    const { w, ai, walkers, target } = goliathWar("compass-rose", 13, "green");
+    const before = walkers.map((g) => Math.hypot(g.x - target.x, g.y - target.y));
+    const { cmds } = runRed(w, 40, ai);
+    expect(ai.push).toBe(target.id);
+    for (const g of walkers) expect(cmds.some((c) => c.type === "attackMove" && c.unitIds.includes(g.id) && near(c, target)), `#${g.id}`).toBe(true);
+    walkers.forEach((g, i) => expect(before[i]! - Math.hypot(g.x - target.x, g.y - target.y)).toBeGreaterThan(15));
+    // its time up, the focus stays on green while the march is on
+    ai.focusUntil = 0;
+    runRed(w, 10, ai);
+    expect(ai.focus).toBe("green");
+    expect(ai.push).toBe(target.id);
+  }, 60000);
+
+  it("no push before 12:00, nor while outgunned, nor with FFA_TACTICS.push off, nor in a duel", () => {
+    const pushes = (setup: ReturnType<typeof goliathWar>) => {
+      const { cmds } = runRed(setup.w, 40, setup.ai);
+      return setup.ai.push !== undefined || cmds.some((c) => c.type === "attackMove" && setup.walkers.some((g) => c.unitIds.includes(g.id)) && near(c, setup.target));
+    };
+    expect(pushes(goliathWar("compass-rose", 11, "green"))).toBe(false);
+    // four more Goliaths at green's base (always in sight): 5 × 1600 of firepower against 1800 + 3 × 1600
+    const outgunned = goliathWar("compass-rose", 13, "green");
+    for (let i = 0; i < 4; i++) spawnUnit(outgunned.w, "goliath", "green", outgunned.target.x + 3 + (i % 2) * 3, outgunned.target.y + 3 + Math.floor(i / 2) * 3);
+    expect(pushes(outgunned)).toBe(false);
+    FFA_TACTICS.push = false;
+    try {
+      expect(pushes(goliathWar("compass-rose", 13, "green"))).toBe(false);
+    } finally {
+      FFA_TACTICS.push = true;
+    }
+    expect(pushes(goliathWar("riverlands", 13, "blue"))).toBe(false);
+  }, 60000);
+
+  it("a base Goliath none of ours can walk to is passed over for the next one, and with none left there's no push", () => {
+    /** `foe`'s base Goliath walled in by rock (two tiles thick, five out), and maybe a second one of its walking 14 tiles out toward the middle. */
+    const walledIn = (second: boolean) => {
+      const setup = goliathWar("compass-rose", 13, "green");
+      const { w, target } = setup;
+      const [tx, ty] = [Math.floor(target.x), Math.floor(target.y)];
+      for (let oy = -6; oy <= 6; oy++)
+        for (let ox = -6; ox <= 6; ox++)
+          if (Math.max(Math.abs(ox), Math.abs(oy)) >= 5 && tx + ox >= 0 && ty + oy >= 0 && tx + ox < w.width && ty + oy < w.height)
+            setTerrain(w, tx + ox, ty + oy, Terrain.Rock);
+      const k = 14 / Math.hypot(w.width / 2 - target.x, w.height / 2 - target.y);
+      const other = second ? spawnUnit(w, "goliath", "green", target.x + (w.width / 2 - target.x) * k, target.y + (w.height / 2 - target.y) * k) : null;
+      return { ...setup, other };
+    };
+    const lone = walledIn(false);
+    const { cmds } = runRed(lone.w, 40, lone.ai);
+    expect(lone.ai.push).toBeUndefined();
+    expect(cmds.some((c) => c.type === "attackMove" && lone.walkers.some((g) => c.unitIds.includes(g.id)) && near(c, lone.target))).toBe(false);
+    const two = walledIn(true);
+    runRed(two.w, 40, two.ai);
+    expect(two.ai.push).toBe(two.other!.id);
+  }, 60000);
+
+  it("a mined-out map: no more Harvesters or garrison squads (a duel's commander still trains both)", () => {
+    for (const map of ["compass-rose", "riverlands"]) {
+      const w = createMapWorld(map, { mutators: ["nomads"] });
+      w.scrap.fill(0);
+      w.factions.red.scrap = 3000;
+      const ai = createAiState("balanced", "normal", 1);
+      const { cmds } = runRed(w, 30, ai);
+      const trained = cmds.filter((c) => c.type === "produce" && ["harvester", "trooper", "rocket-squad"].includes(c.unit));
+      if (map === "compass-rose") {
+        expect(ai.dry).toBe(true);
+        expect(trained).toEqual([]);
+      } else expect(trained.length, map).toBeGreaterThan(0);
+    }
+  }, 60000);
+
+  it("with the calldown aim on, from 12:00 the Sky Hammer is aimed by the damage it would do: not at a whole Goliath, at a hurt one (a duel's aim unchanged)", () => {
+    /** Red's Hammer this pass with `foe`'s Goliath (at `hp`) in sight and its ground explored, or undefined. */
+    const hammer = (map: string, foe: Faction, hp: number) => {
+      const w = createMapWorld(map, { mutators: ["nomads"] });
+      w.tick = 13 * 60 * TICK_RATE;
+      const g = goliathsOf(w, foe)[0]!;
+      g.hp = hp;
+      spawnUnit(w, "scout", "red", g.x + 2, g.y + 2).hp = 1e9;
+      tickFog(w);
+      const c = tickAi(w, "red", createAiState("balanced", "normal", 1)).find((c) => c.type === "calldown" && c.power === "hammer");
+      return c?.type === "calldown" ? Math.hypot(c.x - g.x, c.y - g.y) : undefined;
+    };
+    FFA_TACTICS.calldownAim = true; // (off in play)
+    try {
+      // 260 of a whole Goliath's 3000 (a Mender heals it in half a minute): not worth it
+      expect(hammer("compass-rose", "green", UNITS.goliath.hp)).toBeUndefined();
+      // one it would finish: on it
+      expect(hammer("compass-rose", "green", 200)).toBeLessThan(2);
+      expect(hammer("riverlands", "blue", UNITS.goliath.hp)).toBeLessThan(2);
+    } finally {
+      FFA_TACTICS.calldownAim = false;
+    }
   }, 60000);
 });
